@@ -1,33 +1,31 @@
 /* =============================================
  * 模块：Main 入口脚本
- * 描述：组织 RPGCanvas Editor 的初始化顺序与全局事件
- * 说明：首轮仅完成模块注册与基础日志
+ * 描述：组织模块初始化顺序并连接渲染器、编辑器与 UI
+ * 说明：第 2 轮完成相机功能初始化及启动日志
  * ============================================= */
 
 (function () {
-  // 使用立即执行函数建立私有作用域，防止变量泄露。
-  const VERSION = '0.1'; // 定义当前脚手架版本号，供日志使用。
-  window.RPG = window.RPG || {}; // 确保全局命名空间对象存在。
-  window.RPG.VERSION = VERSION; // 将版本号暴露到全局命名空间，便于外部读取。
-  console.log('[RPGCanvas] v0.1 boot OK'); // 在脚本加载时输出启动成功日志，满足验收要求。
+  // 使用立即执行函数建立私有作用域，防止局部变量泄露。
+  const VERSION = '0.2'; // 定义当前编辑器版本号，记录迭代进度。
+  window.RPG = window.RPG || {}; // 确保全局命名空间存在以承载各模块。
+  window.RPG.VERSION = VERSION; // 将版本号暴露到全局，便于调试与文档引用。
+  console.log('[RPGCanvas] v0.2 boot OK'); // 在脚本加载时输出启动日志，确认入口脚本运行。
 
   document.addEventListener('DOMContentLoaded', () => {
-    // 监听 DOMContentLoaded 事件，确保 DOM 节点可用后再执行初始化。
+    // 等待 DOM 构建完成后再执行初始化，确保节点可用。
     const canvas = document.getElementById('mapCanvas'); // 获取画布节点引用。
-    const toolbar = document.getElementById('toolbar'); // 获取顶部工具栏节点。
-    const sidebar = document.getElementById('sidebar'); // 获取左侧素材面板节点。
-    const statusbar = document.getElementById('statusbar'); // 获取底部状态栏节点。
+    const toolbar = document.getElementById('toolbar'); // 获取顶部工具栏引用。
+    const sidebar = document.getElementById('sidebar'); // 获取侧边栏引用。
+    const statusbar = document.getElementById('statusbar'); // 获取底部状态栏引用。
 
-    window.RPG.UI.init({ canvas, toolbar, sidebar, statusbar }); // 初始化 UI 模块，搭建界面与事件占位。
-    window.RPG.Renderer.init(canvas); // 初始化渲染器模块，准备 Canvas 上下文并绘制网格。
-    window.RPG.Editor.init(); // 初始化编辑器模块，重置地图状态。
+    window.RPG.Renderer.init(canvas); // 初始化渲染器，准备相机与渲染循环。
+    window.RPG.Editor.init(); // 初始化编辑器状态，写入平移与空格标记。
+    window.RPG.UI.init({ canvas, toolbar, sidebar, statusbar }); // 初始化 UI 模块，绑定交互事件。
 
-    window.addEventListener('resize', () => {
-      // 监听窗口尺寸变化事件。
-      const rect = canvas.getBoundingClientRect(); // 读取 Canvas 当前在页面中的尺寸。
-      console.log('[RPGCanvas] resize noted', `${Math.round(rect.width)}x${Math.round(rect.height)}`); // 记录尺寸日志，后续用于适配逻辑。
-    });
+    window.RPG.Renderer.resizeToContainer(); // 启动阶段同步一次 Canvas 尺寸以适配容器。
+    window.RPG.Renderer.requestRender(); // 主动请求初次绘制，确保画面与尺寸同步。
+    // TODO(R7): 动画帧循环 // 预留后续在主入口统筹动画时机的注释。
 
-    console.log('[RPGCanvas] DOM ready, modules initialized'); // 输出 DOM 与模块初始化完成日志。
+    console.log('[RPGCanvas] R2 camera+grid ready'); // 输出本轮完成功能的验收日志。
   });
 })();
