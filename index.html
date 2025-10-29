@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RPGCanvas Editor</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header id="toolbar" role="banner" aria-label="Toolbar">
+    <div class="toolbar-section toolbar-left">
+      <h1 class="app-title">RPGCanvas Editor</h1>
+    </div>
+    <div class="toolbar-section toolbar-center">
+      <div class="btn-group" id="menu-buttons">
+        <button class="btn" type="button" data-action="file">文件</button>
+        <button class="btn" type="button" data-action="map">地图</button>
+        <button class="btn" type="button" data-action="packs">素材包</button>
+      </div>
+    </div>
+    <div class="toolbar-section toolbar-right">
+      <span class="toolbar-status" id="quick-status">准备就绪</span>
+    </div>
+  </header>
+
+  <div id="app">
+    <aside id="sidebar" role="complementary" aria-label="Asset Panel">
+      <div class="panel-header">
+        <h2 class="panel-title">素材面板</h2>
+      </div>
+      <div class="panel-body">
+        <div class="control-group">
+          <label for="packSelect">素材包</label>
+          <select id="packSelect" name="packSelect" aria-label="Select Asset Pack">
+            <option value="placeholder">（暂无素材包）</option>
+          </select>
+        </div>
+        <div class="control-group">
+          <label for="assetSearch">搜索素材</label>
+          <input type="search" id="assetSearch" placeholder="输入关键字..." disabled>
+        </div>
+        <div class="asset-grid" aria-label="Asset Thumbnails">
+          <!-- 素材缩略图占位 -->
+        </div>
+      </div>
+    </aside>
+
+    <main id="stage" role="main" aria-label="Canvas Workspace">
+      <canvas id="mapCanvas" width="1280" height="720"></canvas>
+    </main>
+  </div>
+
+  <footer id="statusbar" role="contentinfo" aria-label="Status Bar">
+    <span id="status-map">无地图</span>
+    <span id="status-zoom">缩放：100%</span>
+    <span id="status-pos">坐标：-</span>
+  </footer>
+
+  <script src="js/renderer.js"></script>
+  <script src="js/editor.js"></script>
+  <script src="js/io.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
