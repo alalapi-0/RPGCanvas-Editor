@@ -22,6 +22,7 @@
     view: { gx0: 0, gy0: 0, gx1: 0, gy1: 0 }, // 缓存当前可见网格范围。
     assetsWarned: false, // 标记素材管理器缺失警告是否已经输出。
     anim: { fps: 6, frame: 0, elapsed: 0, running: true, maxFrame: 3 }, // 定义全局动画时钟状态。
+    debug: { dungeonA1: { showSlotGrid: false, frameOverride: null } }, // 记录调试面板的可视化开关与帧覆盖值。
     lastTimestamp: null, // 记录上一帧的时间戳用于计算 dt。
 
     init(canvasElement) {
@@ -191,6 +192,38 @@
       this.requestRender(); // 状态变化后请求重新绘制。
     },
 
+    setDungeonA1SlotGridVisible(visible) {
+      // 切换地牢 A1 调试网格的可见性。
+      if (!this.debug || !this.debug.dungeonA1) {
+        return; // 若调试状态尚未初始化则直接返回。
+      }
+      const next = Boolean(visible); // 规范化输入为布尔值。
+      if (this.debug.dungeonA1.showSlotGrid === next) {
+        return; // 当状态未变化时无需重绘。
+      }
+      this.debug.dungeonA1.showSlotGrid = next; // 更新状态。
+      this.requestRender(); // 请求重新渲染以更新覆盖层。
+    },
+
+    setDungeonA1FrameOverride(frame) {
+      // 设置地牢 A1 动画的帧覆盖值，传入 null/undefined 表示恢复自动播放。
+      if (!this.debug || !this.debug.dungeonA1) {
+        return; // 若调试状态缺失则直接返回。
+      }
+      const allowed = [0, 1, 2]; // 仅允许 0/1/2 三个离散帧。
+      const next = Number.isInteger(frame) && allowed.includes(frame) ? frame : null; // 规范化传入值。
+      if (this.debug.dungeonA1.frameOverride === next) {
+        return; // 当目标值与现状一致时无需重绘。
+      }
+      this.debug.dungeonA1.frameOverride = next; // 写入新的覆盖帧。
+      this.requestRender(); // 请求重绘以立即刷新画面。
+    },
+
+    getDungeonA1FrameOverride() {
+      // 返回当前地牢 A1 帧覆盖值，未设置时为 null。
+      return this.debug && this.debug.dungeonA1 ? this.debug.dungeonA1.frameOverride : null;
+    },
+
     render() {
       // 主渲染函数负责绘制背景、网格、地图与画笔预览。
       this.clear(); // 先清空画布并绘制底纹。
@@ -245,6 +278,7 @@
                 const baseFrame = tileDef.animated !== undefined ? this.anim.frame : 0; // 计算当前全局帧索引。
                 const offset = Number.isInteger(placement.animOffset) ? placement.animOffset : 0; // 读取地图单元格的动画偏移。
                 const frameIndex = tileDef.animated !== undefined ? (baseFrame + offset) % tileDef.animated : 0; // 合成最终帧索引。
+                frameIndex = this._resolveFrameForTile(tileDef, frameIndex); // 根据调试覆盖修正帧索引。
                 if (this.shouldUseAutoTile16(tileDef)) {
                   // 当素材属于 A1 自动拼接范围时使用 16 掩码渲染流程。
                   this.drawA1Auto16(tileDef, worldX, worldY, gx, gy, frameIndex, placement); // 调用自动拼接方法绘制象限组合。
@@ -264,6 +298,7 @@
         }
       }
       this.drawBrushPreview(); // 在地图之后绘制画笔预览。
+      this.drawDungeonA1DebugOverlay(); // 绘制地牢 A1 调试网格覆盖层（若启用）。
     },
 
     setBrushTile(tileId) {
@@ -400,7 +435,6 @@
       const radians = (rotation * Math.PI) / 180; // 将角度转换为弧度。
       const flipX = Boolean(placement && placement.flipX); // 读取水平翻转标记。
       const flipY = Boolean(placement && placement.flipY); // 读取垂直翻转标记。
-      const animStrideX = tileDef.animStrideX !== undefined ? tileDef.animStrideX : baseRect[2]; // 计算动画帧步进。
       const centerOffset = this.tileSize / 2; // 计算图块中心偏移。
       this.ctx.save(); // 保存上下文状态。
       this.ctx.translate(screenPos.x, screenPos.y); // 将原点移动到图块左上角的屏幕坐标。
@@ -430,16 +464,36 @@
           this.ctx,
           image,
           baseRect,
+          tileDef,
           data.role,
           data.rot,
           frameIndex,
-          animStrideX,
           info.dx,
           info.dy,
           tileDef.pack,
         ); // 调用工具绘制 32→16 子片。
       });
       this.ctx.restore(); // 恢复上下文状态避免影响后续绘制。
+    },
+
+    _resolveFrameForTile(tileDef, frame) {
+      // 根据调试覆盖值或素材自身帧数确定最终的动画帧索引。
+      const override = this.getDungeonA1FrameOverride(); // 读取调试帧覆盖值。
+      if (override !== null && tileDef && Array.isArray(tileDef.animWindowCols) && tileDef.animWindowCols.length > 0) {
+        const total = tileDef.animWindowCols.length; // 滑窗帧数。
+        if (total === 0) {
+          return 0; // 防御性回退。
+        }
+        return ((override % total) + total) % total; // 将覆盖帧裁剪到合法范围。
+      }
+      if (!Number.isInteger(frame)) {
+        return 0; // 非整数帧索引时使用第 0 帧。
+      }
+      const totalFrames = tileDef && Number.isInteger(tileDef.animated) && tileDef.animated > 0 ? tileDef.animated : 1; // 读取素材帧数。
+      if (totalFrames <= 0) {
+        return 0; // 当帧数异常时回退到 0。
+      }
+      return ((frame % totalFrames) + totalFrames) % totalFrames; // 将帧索引映射到合法区间。
     },
 
     drawTileImage(tileDef, worldX, worldY, opts = {}) {
@@ -462,6 +516,7 @@
         flipY: false, // 默认不翻转。
         ...opts, // 合并调用方提供的覆盖值。
       }; // 完成选项对象。
+      const resolvedFrame = this._resolveFrameForTile(tileDef, options.frameIndex); // 根据调试覆盖值解析最终帧。
       const screenPos = this.worldToScreen(worldX, worldY); // 将世界坐标转换为屏幕坐标。
       const centerX = screenPos.x + (this.tileSize * this.camera.zoom) / 2; // 计算绘制中心 X。
       const centerY = screenPos.y + (this.tileSize * this.camera.zoom) / 2; // 计算绘制中心 Y。
@@ -479,7 +534,7 @@
       this.ctx.imageSmoothingEnabled = false; // 禁用插值保持像素清晰。
       const drawX = -this.tileSize / 2; // 计算目标矩形左上角 X（以中心为原点）。
       const drawY = -this.tileSize / 2; // 计算目标矩形左上角 Y。
-      assets.drawToCanvas(this.ctx, tileDef, drawX, drawY, this.tileSize, this.tileSize, options.frameIndex); // 调用共享绘制函数完成图块绘制。
+      assets.drawToCanvas(this.ctx, tileDef, drawX, drawY, this.tileSize, this.tileSize, resolvedFrame); // 调用共享绘制函数完成图块绘制。
       this.ctx.restore(); // 恢复上下文状态避免影响后续绘制。
     },
 
@@ -575,6 +630,45 @@
       this.ctx.globalAlpha = shouldWarn ? 1 : 0.9; // 警告态使用不透明描边。
       this.ctx.strokeRect(Math.round(screenPos.x) + 0.5, Math.round(screenPos.y) + 0.5, width, height); // 绘制与像素对齐的描边框。
       this.ctx.restore(); // 恢复上下文状态。
+    },
+
+    drawDungeonA1DebugOverlay() {
+      // 在画布上绘制地牢 A1 的 4×4 slot 调试网格。
+      const state = this.debug && this.debug.dungeonA1 ? this.debug.dungeonA1 : null; // 读取调试状态。
+      if (!state || !state.showSlotGrid || !this.ctx || !this.canvas) {
+        return; // 未开启调试或上下文缺失时直接返回。
+      }
+      const ctx = this.ctx; // 缓存上下文引用。
+      const cellW = this.tileSize * 4; // 一个 slot 横跨 4 个 48 像素格。
+      const cellH = this.tileSize * 3; // 一个 slot 纵跨 3 个 48 像素格。
+      const worldStartX = this.camera.x; // 视口左上角世界坐标 X。
+      const worldStartY = this.camera.y; // 视口左上角世界坐标 Y。
+      const worldEndX = this.camera.x + this.canvas.width / this.camera.zoom; // 视口右下角世界坐标 X。
+      const worldEndY = this.camera.y + this.canvas.height / this.camera.zoom; // 视口右下角世界坐标 Y。
+      const startX = Math.floor(worldStartX / cellW) * cellW; // 将起点对齐到 slot 边界。
+      const startY = Math.floor(worldStartY / cellH) * cellH; // 将起点对齐到 slot 边界。
+      ctx.save(); // 保存上下文状态。
+      ctx.strokeStyle = 'rgba(255, 82, 82, 0.6)'; // 使用半透明红色描边以提升可见度。
+      ctx.lineWidth = 1; // 设置线宽为 1 像素。
+      for (let x = startX; x <= worldEndX; x += cellW) {
+        const top = this.worldToScreen(x, worldStartY); // 计算垂直线顶部屏幕坐标。
+        const bottom = this.worldToScreen(x, worldEndY); // 计算垂直线底部屏幕坐标。
+        const px = Math.round(top.x) + 0.5; // 对齐到像素中心减少模糊。
+        ctx.beginPath();
+        ctx.moveTo(px, Math.round(top.y));
+        ctx.lineTo(px, Math.round(bottom.y));
+        ctx.stroke();
+      }
+      for (let y = startY; y <= worldEndY; y += cellH) {
+        const left = this.worldToScreen(worldStartX, y); // 计算水平线左端屏幕坐标。
+        const right = this.worldToScreen(worldEndX, y); // 计算水平线右端屏幕坐标。
+        const py = Math.round(left.y) + 0.5; // 对齐到像素中心。
+        ctx.beginPath();
+        ctx.moveTo(Math.round(left.x), py);
+        ctx.lineTo(Math.round(right.x), py);
+        ctx.stroke();
+      }
+      ctx.restore(); // 恢复上下文状态。
     },
 
     _calcVisibleRange() {

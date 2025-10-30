@@ -1,0 +1,16 @@
+Water|水面
+Deep Water|深い水面
+Polluted Water|濁った水面
+Poison Water|毒の水面
+Swamp|沼地
+Bog|湿地
+Lava|溶岩
+Lava (Bright)|明るい溶岩
+Slime Pool|スライムの池
+Acid Pool|酸の池
+Waterfall (Brick)|滝（レンガ壁）
+Waterfall (Metal)|滝（金属壁）
+Waterfall (Stone)|滝（石壁）
+Waterfall (Ruins)|滝（遺跡壁）
+Waterfall (Dark)|滝（暗色壁）
+Waterfall (Stone Wall)|滝（石造壁）

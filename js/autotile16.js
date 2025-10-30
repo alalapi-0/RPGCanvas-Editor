@@ -224,7 +224,7 @@
       return DEFAULT_ROLE_CELLS[role] || DEFAULT_ROLE_CELLS.FILL; // 否则返回默认映射或兜底的填充坐标。
     },
 
-    composeTileQuad(ctx, image, baseRect, role, rot, frameIndex, animStrideX, dx, dy, packName) {
+    composeTileQuad(ctx, image, baseRect, tileDef, role, rot, frameIndex, dx, dy, packName) {
       // 在 48×48 格内的某个象限绘制角色对应的 32×32 子片。
       if (!(ctx instanceof CanvasRenderingContext2D)) {
         // 若上下文非法则直接返回。
@@ -239,13 +239,25 @@
         return; // 防御性退出。
       }
       const [sxBase, syBase, sw, sh] = baseRect; // 解构基准矩形参数。
-      const strideX = Number.isInteger(animStrideX) && animStrideX > 0 ? animStrideX : sw; // 计算动画帧间的横向偏移。
+      const strideX = tileDef && Number.isInteger(tileDef.animStrideX) && tileDef.animStrideX > 0 ? tileDef.animStrideX : sw; // 计算动画帧间的横向偏移。
       const totalFrameOffset = Number.isInteger(frameIndex) && frameIndex > 0 ? frameIndex * strideX : 0; // 根据帧索引计算总偏移。
       const roleCell = this._resolveRoleCell(packName, role); // 根据角色和包名获取 (cx, cy)。
       const cx = roleCell[0] || 0; // 读取列索引，若不存在则默认为 0。
       const cy = roleCell[1] || 0; // 读取行索引，若不存在则默认为 0。
-      const sourceX = sxBase + cx * sw + totalFrameOffset; // 计算源图像的 X 坐标。
-      const sourceY = syBase + cy * sh; // 计算源图像的 Y 坐标。
+      let sourceX = sxBase + cx * sw + totalFrameOffset; // 计算源图像的 X 坐标。
+      let sourceY = syBase + cy * sh; // 计算源图像的 Y 坐标。
+      if (tileDef && Array.isArray(tileDef.animWindowCols) && tileDef.animWindowCols.length > 0 && tileDef.animPairW) {
+        // 当素材使用滑窗动画时改用滑窗算法定位源区。
+        const cols = tileDef.animWindowCols; // 读取滑窗列序列。
+        const animFrames = cols.length; // 计算帧数。
+        const safeIndex = animFrames > 0 ? ((frameIndex % animFrames) + animFrames) % animFrames : 0; // 取模限制索引。
+        const winStart = Number.isInteger(cols[safeIndex]) ? cols[safeIndex] : 0; // 读取当前滑窗起点列。
+        const pairW = Number.isInteger(tileDef.animPairW) && tileDef.animPairW > 0 ? tileDef.animPairW : 1; // 读取两列对宽度。
+        const pairOffset = cx % pairW; // 根据角色所在列确定滑窗内的偏移。
+        const finalCol = winStart + pairOffset; // 计算最终采样列。
+        sourceX = sxBase + finalCol * sw; // 使用滑窗列重算源 X。
+        sourceY = syBase + cy * sh; // 行索引仍由角色控制。
+      }
       if (sourceX + sw > image.naturalWidth || sourceY + sh > image.naturalHeight) {
         // 防御性检查：若超出图集边界则不绘制。
         return; // 避免抛出异常。

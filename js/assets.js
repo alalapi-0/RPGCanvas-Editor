@@ -35,12 +35,14 @@
     packs: [], // 存储规范化后的素材包数组，提供给 UI 遍历显示。
     tileIndex: new Map(), // 建立 tileId 到素材定义的映射，支持快速查询。
     images: new Map(), // 缓存已加载的 HTMLImageElement，避免重复请求。
+    dungeonA1: null, // 记录 Dungeon_A1 的切片与映射信息供 UI 调试使用。
 
     async loadManifest(url = 'assets/manifest.json') {
       // 异步加载 manifest 文件并执行结构校验的入口方法。
       this.manifest = null; // 重置 manifest 引用以防残留旧数据。
       this.packs = []; // 清空素材包数组确保重新加载时状态干净。
       this.tileIndex.clear(); // 清空索引映射防止旧条目干扰。
+      this.dungeonA1 = null; // 重置 Dungeon_A1 元数据以防残留旧状态。
       if (typeof url !== 'string' || !url.trim()) {
         // 若传入的 URL 非法则直接抛出错误提示调用方。
         throw new Error('[Assets] loadManifest requires valid url'); // 抛出错误说明参数不正确。
@@ -64,8 +66,8 @@
         throw new Error('[Assets] manifest.packs must be array'); // 抛出错误提示结构不符。
       }
       const normalizedPacks = []; // 创建临时数组存放规范化后的素材包。
-      data.packs.forEach((pack, packIndex) => {
-        // 遍历每个素材包条目并逐一校验。
+      for (let packIndex = 0; packIndex < data.packs.length; packIndex += 1) {
+        const pack = data.packs[packIndex]; // 遍历每个素材包条目并逐一校验。
         if (!pack || typeof pack !== 'object') {
           // 若素材包不是对象则直接抛错。
           throw new Error(`[Assets] pack at index ${packIndex} invalid`); // 抛出错误指出位置。
@@ -88,8 +90,9 @@
           src: pack.src.trim(), // 保存去除空格后的图集路径。
           tiles: [], // 准备存放规范化的素材定义数组。
         }; // 结束对象字面量定义。
-        pack.tiles.forEach((tile, tileIndexInPack) => {
+        for (let tileIndexInPack = 0; tileIndexInPack < pack.tiles.length; tileIndexInPack += 1) {
           // 遍历素材包内的每个素材条目执行校验。
+          const tile = pack.tiles[tileIndexInPack];
           const normalizedTile = this._normalizeTile(tile, normalizedPack, packIndex, tileIndexInPack); // 调用内部方法返回规范化素材定义。
           if (this.tileIndex.has(normalizedTile.id)) {
             // 若索引表中已存在相同 id 则说明 manifest 存在重复条目。
@@ -97,12 +100,90 @@
           }
           this.tileIndex.set(normalizedTile.id, normalizedTile); // 将素材写入索引表便于快速检索。
           normalizedPack.tiles.push(normalizedTile); // 将素材加入当前包的列表供 UI 使用。
-        });
+        }
+        if (normalizedPack.name === 'Dungeon_A1') {
+          // 当遇到地牢 A1 包时执行专用切片逻辑。
+          await this._augmentDungeonA1Pack(normalizedPack, packIndex); // 调用内部方法追加 96 个子素材。
+        }
         normalizedPacks.push(normalizedPack); // 将处理完成的素材包压入结果数组。
-      });
+      }
       this.manifest = data; // 保存原始 manifest 数据供调试。
       this.packs = normalizedPacks; // 写入规范化素材包数组供外部访问。
       return true; // 返回 true 表示加载成功。
+    },
+
+    async _augmentDungeonA1Pack(normalizedPack, packIndex) {
+      // 内部辅助：调用切片器生成 Dungeon_A1 的 16 组 96 格。
+      const slicer = window.RPG?.A1DungeonSlicer; // 读取切片器引用。
+      if (!slicer || typeof slicer.slice !== 'function') {
+        console.warn('[Assets] A1DungeonSlicer 不可用，跳过 Dungeon_A1 自动切片'); // 输出警告提醒缺少依赖。
+        return;
+      }
+      let image = null;
+      try {
+        image = await this.getImageFor(normalizedPack.src); // 确保图集加载完成。
+      } catch (error) {
+        console.error('[Assets] 无法加载 Dungeon_A1 图集，跳过切片', error); // 输出错误并终止切片。
+        return;
+      }
+      let sliceResult = null;
+      try {
+        sliceResult = await slicer.slice(image); // 执行切片返回组与 tile 列表。
+      } catch (error) {
+        console.error('[Assets] Dungeon_A1 切片失败', error); // 输出错误日志便于调试。
+        return;
+      }
+      if (!sliceResult || !Array.isArray(sliceResult.flatTiles) || !Array.isArray(sliceResult.groups)) {
+        console.warn('[Assets] Dungeon_A1 切片结果异常'); // 保护性检测输出警告。
+        return;
+      }
+      const tileMap = new Map(); // 准备临时 Map 用于组装组结构。
+      sliceResult.flatTiles.forEach((tile) => {
+        // 遍历 96 个子素材执行规范化并注入索引。
+        const normalizedTile = this._normalizeTile(tile, normalizedPack, packIndex, normalizedPack.tiles.length); // 复用规范化逻辑。
+        if (this.tileIndex.has(normalizedTile.id)) {
+          console.warn('[Assets] Dungeon_A1 切片产生重复 id，忽略', normalizedTile.id); // 遇到重复时给出警告并跳过。
+          return;
+        }
+        this.tileIndex.set(normalizedTile.id, normalizedTile); // 写入索引。
+        normalizedPack.tiles.push(normalizedTile); // 附加到素材包中。
+        tileMap.set(normalizedTile.id, normalizedTile); // 记录到临时 Map。
+      });
+      const groups = sliceResult.groups.map((group) => {
+        // 根据切片结果构建附带规范化 tile 的组结构。
+        const tiles = []; // 存储组内 tile 引用。
+        group.tiles.forEach((tileProto) => {
+          const normalizedTile = tileMap.get(tileProto.id);
+          if (normalizedTile) {
+            tiles.push(normalizedTile); // 收录成功匹配的 tile。
+            normalizedTile.groupLabel = { ...group.label }; // 将组标签写入 tile 方便 UI 使用。
+          }
+        });
+        return {
+          index: group.index,
+          slot: group.slot,
+          label: { ...group.label },
+          tiles,
+        };
+      });
+      normalizedPack.groups = groups; // 将组结构挂载到素材包。
+      const info = {
+        names: Array.isArray(sliceResult.names) ? sliceResult.names : [],
+        order: Array.isArray(sliceResult.order) ? sliceResult.order.slice() : [],
+        groups,
+        flatTiles: sliceResult.flatTiles.length,
+      }; // 汇总元数据供调试与 UI 使用。
+      if (!normalizedPack.meta || typeof normalizedPack.meta !== 'object') {
+        normalizedPack.meta = {}; // 若原先不存在元数据对象则创建空对象。
+      }
+      normalizedPack.meta.dungeonA1 = info; // 将元数据写入素材包。
+      this.dungeonA1 = {
+        packName: normalizedPack.name,
+        names: info.names,
+        order: info.order,
+        groups,
+      }; // 保存全局引用方便 Debug 面板使用。
+      console.log(`[RPGCanvas] Dungeon_A1 slicer: ${groups.length} groups / ${sliceResult.flatTiles.length} tiles ready`);
     },
 
     _normalizeTile(tile, normalizedPack, packIndex, tileIndexInPack) {
@@ -142,13 +223,14 @@
         }
         affordances = [...tile.affordances]; // 使用浅拷贝保留字符串数组。
       }
+      const hasAnimWindow = Array.isArray(tile.animWindowCols); // 标记是否使用滑窗动画。
       const normalizedTile = {
         // 构造规范化后的素材定义对象。
         id: tile.id.trim(), // 记录去除空格后的唯一标识。
         rect: { x: rawX, y: rawY, width: rawW, height: rawH }, // 将矩形数据转换为具名属性形式。
         layer: tile.layer, // 保留合法的图层信息。
         animated: tile.animated === undefined ? undefined : tile.animated, // 保留动画帧数信息，静态素材则为 undefined。
-        animStrideX: tile.animStrideX === undefined ? undefined : tile.animStrideX, // 保留横向帧偏移步长，用于 A1 动画。
+        animStrideX: tile.animStrideX === undefined ? undefined : tile.animStrideX, // 保留横向帧偏移步长或 undefined。
         walkable: tile.walkable === undefined ? undefined : Boolean(tile.walkable), // 规范 walkable 字段为布尔或 undefined。
         blocks: tile.blocks === undefined ? undefined : Boolean(tile.blocks), // 规范 blocks 字段为布尔或 undefined。
         affordances, // 保留验证后的 affordances 字段或 undefined。
@@ -157,6 +239,54 @@
         src: normalizedPack.src, // 记录素材所属的图集文件名。
         validationWarnings: [], // 初始化警告列表以收集非致命问题。
       }; // 完成素材对象构建。
+      if (hasAnimWindow) {
+        // 当素材声明滑窗列序列时执行结构校验。
+        if (!tile.animWindowCols.every((value) => Number.isInteger(value) && value >= 0)) {
+          // 若列表中存在非法值则抛出错误。
+          throw new Error(`[Assets] tile.animWindowCols invalid at ${tile.id}`);
+        }
+        normalizedTile.animWindowCols = tile.animWindowCols.map((value) => value); // 保留滑窗列起点副本。
+      }
+      if (tile.animPairW !== undefined) {
+        // 当提供每帧占用列数时进行校验。
+        if (!Number.isInteger(tile.animPairW) || tile.animPairW <= 0) {
+          throw new Error(`[Assets] tile.animPairW invalid at ${tile.id}`); // 抛出错误提示非法值。
+        }
+        normalizedTile.animPairW = tile.animPairW; // 记录帧宽列数。
+      }
+      if (tile.group !== undefined) {
+        // 当声明组编号时校验其合法性。
+        if (!Number.isInteger(tile.group) || tile.group <= 0) {
+          throw new Error(`[Assets] tile.group invalid at ${tile.id}`); // 抛出错误提示非法组号。
+        }
+        normalizedTile.group = tile.group; // 写入组编号。
+      }
+      const slotSource = tile.slotMeta || tile.slot || null; // 兼容不同字段命名。
+      if (slotSource) {
+        // 当提供 slot 元数据时进行校验并拷贝。
+        if (typeof slotSource !== 'object') {
+          throw new Error(`[Assets] tile.slotMeta invalid at ${tile.id}`); // slot 必须为对象。
+        }
+        const slot = {
+          index: Number.isInteger(slotSource.index) ? slotSource.index : undefined,
+          cx: Number.isInteger(slotSource.cx) ? slotSource.cx : undefined,
+          cy: Number.isInteger(slotSource.cy) ? slotSource.cy : undefined,
+          x: Number.isFinite(slotSource.x) ? slotSource.x : undefined,
+          y: Number.isFinite(slotSource.y) ? slotSource.y : undefined,
+          w: Number.isFinite(slotSource.w) ? slotSource.w : undefined,
+          h: Number.isFinite(slotSource.h) ? slotSource.h : undefined,
+        }; // 构造 slot 基本信息。
+        if ([slot.index, slot.cx, slot.cy, slot.x, slot.y, slot.w, slot.h].some((value) => value === undefined)) {
+          throw new Error(`[Assets] tile.slotMeta missing fields at ${tile.id}`); // 若缺失必要字段则抛出错误。
+        }
+        normalizedTile.slot = slot; // 写入 slot 信息。
+        normalizedTile.slotLocal = {
+          row: Number.isInteger(slotSource.row) ? slotSource.row : 0,
+          colInPair: Number.isInteger(slotSource.colInPair) ? slotSource.colInPair : 0,
+          baseCol: Number.isInteger(slotSource.baseCol) ? slotSource.baseCol : undefined,
+        }; // 记录 slot 内部位置信息。
+        normalizedTile.animPairOffset = normalizedTile.slotLocal.colInPair; // 方便滑窗计算的列偏移。
+      }
       if (normalizedTile.occluderTopPx !== undefined) {
         // 当提供遮挡高度时需要确保为非负整数。
         if (!Number.isInteger(normalizedTile.occluderTopPx) || normalizedTile.occluderTopPx < 0) {
@@ -170,9 +300,12 @@
           // animated 必须为正整数。
           throw new Error(`[Assets] tile.animated invalid at ${tile.id}`); // 抛出错误提示动画帧数非法。
         }
-        if (!Number.isInteger(normalizedTile.animStrideX) || normalizedTile.animStrideX <= 0) {
-          // animStrideX 必须同时存在且为正整数。
-          throw new Error(`[Assets] tile.animStrideX invalid at ${tile.id}`); // 抛出错误提示帧偏移非法。
+        if (!hasAnimWindow) {
+          // 仅在不使用滑窗动画时要求提供 animStrideX。
+          if (!Number.isInteger(normalizedTile.animStrideX) || normalizedTile.animStrideX <= 0) {
+            // animStrideX 必须同时存在且为正整数。
+            throw new Error(`[Assets] tile.animStrideX invalid at ${tile.id}`); // 抛出错误提示帧偏移非法。
+          }
         }
         if (normalizedTile.rect.width === A1_CELL && normalizedTile.rect.height === A1_CELL) {
           // 针对 32×32 的 A1 动画素材执行附加对齐校验。
@@ -184,13 +317,16 @@
             // 若 X 坐标未按 32 像素对齐则记录警告。
             normalizedTile.validationWarnings.push('rect X 未按 32 对齐'); // 写入警告信息。
           }
-          const blockStart = Math.floor(normalizedTile.rect.x / A1_BLOCK_WIDTH) * A1_BLOCK_WIDTH; // 计算当前所在大区块的起始 X。
-          const offsetInBlock = normalizedTile.rect.x - blockStart; // 计算在大区块内的偏移量。
-          if (offsetInBlock >= A1_STRIP_WIDTH) {
-            // 若偏移量超出 0~63 范围则说明未位于 f=0 帧带。
-            const message = `[Assets] animated tile rect not in f=0 strip: ${tile.id}`; // 构造警告信息便于输出。
-            normalizedTile.validationWarnings.push('rect 不在 f=0 帧带'); // 将问题写入警告列表。
-            console.warn(message); // 在控制台输出警告提醒开发者。
+          if (!hasAnimWindow) {
+            // 仅对传统 stride 动画检查是否位于 f=0 帧带。
+            const blockStart = Math.floor(normalizedTile.rect.x / A1_BLOCK_WIDTH) * A1_BLOCK_WIDTH; // 计算当前所在大区块的起始 X。
+            const offsetInBlock = normalizedTile.rect.x - blockStart; // 计算在大区块内的偏移量。
+            if (offsetInBlock >= A1_STRIP_WIDTH) {
+              // 若偏移量超出 0~63 范围则说明未位于 f=0 帧带。
+              const message = `[Assets] animated tile rect not in f=0 strip: ${tile.id}`; // 构造警告信息便于输出。
+              normalizedTile.validationWarnings.push('rect 不在 f=0 帧带'); // 将问题写入警告列表。
+              console.warn(message); // 在控制台输出警告提醒开发者。
+            }
           }
         }
       } else if (normalizedTile.animStrideX !== undefined) {
@@ -204,6 +340,64 @@
     getPacks() {
       // 返回规范化后的素材包数组给 UI 使用。
       return this.packs; // 直接返回内部数组引用，调用方需自行避免修改。
+    },
+
+    getDungeonA1Meta() {
+      // 返回 Dungeon_A1 的名称、顺序与组信息快照供调试界面使用。
+      if (!this.dungeonA1) {
+        return null; // 当尚未加载切片时返回 null。
+      }
+      return {
+        packName: this.dungeonA1.packName,
+        names: this.dungeonA1.names.map((entry) => ({ ...entry })), // 复制名称数组防止外部修改。
+        order: Array.isArray(this.dungeonA1.order) ? [...this.dungeonA1.order] : [],
+        groups: this.dungeonA1.groups, // 组对象本身可供 UI 直接读取。
+      };
+    },
+
+    updateDungeonA1Order(nextOrder) {
+      // 根据新的 order 数组更新组标签与内部记录，返回规范化后的顺序。
+      if (!this.dungeonA1) {
+        return null; // 当元数据缺失时直接返回。
+      }
+      const total = this.dungeonA1.names.length || 16; // 计算名称总数。
+      const normalized = Array.from({ length: total }, (_, index) => {
+        const value = Array.isArray(nextOrder) ? nextOrder[index] : undefined; // 读取传入值。
+        if (!Number.isInteger(value) || value < 1 || value > total) {
+          return index + 1; // 不合法时使用默认顺序。
+        }
+        return value; // 使用合法的 slot 编号。
+      });
+      this.dungeonA1.order = normalized; // 更新内部记录。
+      const groupsByIndex = new Map();
+      this.dungeonA1.groups.forEach((group) => {
+        groupsByIndex.set(group.index, group); // 通过组编号建立索引。
+      });
+      const fallbackLabel = (index) => ({ en: `Group ${index}`, ja: `グループ ${index}` }); // 构造默认标签。
+      groupsByIndex.forEach((group, index) => {
+        const label = fallbackLabel(index); // 默认先写入顺序标签。
+        group.label = label;
+        if (Array.isArray(group.tiles)) {
+          group.tiles.forEach((tile) => {
+            tile.groupLabel = { ...label }; // 将默认标签写入 tile。
+          });
+        }
+      });
+      normalized.forEach((slotNumber, nameIndex) => {
+        const group = groupsByIndex.get(slotNumber);
+        const nameEntry = this.dungeonA1.names[nameIndex];
+        if (!group || !nameEntry) {
+          return; // 若映射目标或名称缺失则跳过。
+        }
+        const label = { en: nameEntry.en, ja: nameEntry.ja }; // 构造新的标签对象。
+        group.label = label; // 覆盖组标签。
+        if (Array.isArray(group.tiles)) {
+          group.tiles.forEach((tile) => {
+            tile.groupLabel = { ...label }; // 同步 tile 上的标签副本。
+          });
+        }
+      });
+      return normalized; // 返回处理后的顺序供 UI 使用。
     },
 
     getTileById(id) {
@@ -322,8 +516,25 @@
       const strideX = tileDef.animated !== undefined ? tileDef.animStrideX || rect.width : rect.width; // 若为动画素材使用 animStrideX，否则等于帧宽。
       const safeIndexBase = Number.isInteger(frameIndex) ? frameIndex : 0; // 将传入帧索引规整为整数。
       const wrappedIndex = totalFrames > 0 ? ((safeIndexBase % totalFrames) + totalFrames) % totalFrames : 0; // 通过取模将帧索引限制在合法范围内。
-      const sx = rect.x + wrappedIndex * strideX; // 计算源图像 X 坐标偏移。
-      const sy = rect.y; // 源图像 Y 坐标即 rect.y。
+      let sx = rect.x + wrappedIndex * strideX; // 默认按照传统 stride 计算源 X。
+      let sy = rect.y; // 默认源 Y 即 rect.y。
+      if (Array.isArray(tileDef.animWindowCols) && tileDef.animWindowCols.length > 0 && tileDef.animPairW) {
+        // 当素材声明滑窗列序列时改用滑窗算法计算采样位置。
+        const cols = tileDef.animWindowCols; // 缓存滑窗列序列。
+        const animFrames = cols.length; // 读取滑窗帧数量。
+        const winIndex = animFrames > 0 ? ((safeIndexBase % animFrames) + animFrames) % animFrames : 0; // 计算当前滑窗帧索引。
+        const winStart = Number.isInteger(cols[winIndex]) ? cols[winIndex] : 0; // 读取滑窗起始列。
+        const pairOffset = Number.isInteger(tileDef.animPairOffset) ? tileDef.animPairOffset : 0; // 读取两列对内的偏移。
+        const slot = tileDef.slot || null; // 读取 slot 元数据。
+        const slotLocal = tileDef.slotLocal || {}; // 读取 slot 内位置信息。
+        if (slot) {
+          const cellWidth = A1_CELL; // 使用 32 像素的基础宽度。
+          const finalCol = winStart + pairOffset; // 根据滑窗起点与偏移确定最终列。
+          const row = Number.isInteger(slotLocal.row) ? slotLocal.row : Math.floor((rect.y - slot.y) / cellWidth); // 计算所在行。
+          sx = slot.x + finalCol * cellWidth; // 在 slot 起点上定位当前列。
+          sy = slot.y + row * cellWidth; // 在 slot 起点上定位当前行。
+        }
+      }
       const sw = rect.width; // 源图像宽度为 rect.width（可能 32 或 48）。
       const sh = rect.height; // 源图像高度为 rect.height（可能 32 或 48）。
       if (sx + sw > image.naturalWidth || sy + sh > image.naturalHeight) {
