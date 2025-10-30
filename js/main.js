@@ -6,7 +6,7 @@
 
 (function () {
   // 使用立即执行函数建立私有作用域，避免局部变量污染全局命名空间。
-  const VERSION = '0.4'; // 定义当前编辑器迭代版本号，便于在控制台追踪版本。
+  const VERSION = '0.6'; // 定义当前编辑器迭代版本号，便于在控制台追踪版本。
   window.RPG = window.RPG || {}; // 确保全局命名空间存在以挂载模块。
   window.RPG.VERSION = VERSION; // 将版本号暴露到全局对象，方便调试查询。
   console.log('[RPGCanvas] v0.4 boot OK'); // 在脚本加载阶段输出启动日志确认入口加载成功。
@@ -34,7 +34,7 @@
     window.RPG.Renderer.requestRender(); // 请求首次绘制以展示网格背景。
     // TODO(R7): 动画帧循环 // 预留后续扩展动画驱动的注释。
 
-    console.log('[RPGCanvas] R5 atlas static draw + brush preview ready'); // 输出第五轮验收所需的核心功能就绪日志。
+    console.log('[RPGCanvas] R6 paint/erase + map render ready'); // 输出第六轮验收要求的核心功能就绪日志。
 
     if (uiInitResult && uiInitResult.manifestReady) {
       // 当素材清单成功加载且面板就绪时输出验收日志。

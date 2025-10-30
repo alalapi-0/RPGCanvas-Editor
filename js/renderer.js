@@ -17,6 +17,10 @@
     backgroundPattern: null, // 缓存棋盘底纹的 Pattern 对象，避免每帧重复创建。
     rafId: null, // 记录 requestAnimationFrame 的句柄，便于后续扩展管理循环。
     brush: { tileId: null, rotation: 0, alpha: 0.65, visible: false, hoverGX: 0, hoverGY: 0 }, // 记录画笔预览相关状态，包含素材 id、旋转角、透明度、可见性与吸附的网格坐标。
+    map: null, // 当前渲染目标的 MapData 引用，UI 在加载或切换地图时会赋值。
+    layerOrder: ['ground', 'structure', 'prop', 'overlay', 'decal'], // 定义绘制图层的固定顺序，确保遮挡关系正确。
+    view: { gx0: 0, gy0: 0, gx1: 0, gy1: 0 }, // 记录当前视口可见的网格范围，用于裁剪渲染循环。
+    assetsWarned: false, // 标记素材管理器缺失的警告是否已经输出，避免在循环中反复打印。
 
     init(canvasElement) {
       // 初始化方法，接收 Canvas 元素并完成上下文、循环与背景配置。
@@ -33,6 +37,12 @@
       this.createBackgroundPattern(); // 创建棋盘底纹 Pattern，为 clear 阶段准备。
       this.startLoop(); // 启动基于 requestAnimationFrame 的渲染循环。
       this.requestRender(); // 初始化完成后立刻请求一次绘制，确保画面同步。
+    },
+
+    setMap(mapData) {
+      // 设置当前需要渲染的地图引用。
+      this.map = mapData && typeof mapData === 'object' ? mapData : null; // 仅接受对象类型，其他情况视为清空地图引用。
+      this.requestRender(); // 地图切换后需要重新绘制全部内容。
     },
 
     startLoop() {
@@ -168,7 +178,63 @@
         // 当网格开关开启时绘制网格线。
         this.drawGrid(); // 调用 drawGrid 函数渲染 48 像素间隔的网格。
       }
-      this.drawBrushPreview(); // 在所有基础元素之后绘制画笔预览，确保预览层位于网格上方。
+      const map = this.map; // 缓存当前地图引用，避免在循环中重复访问属性。
+      if (map) {
+        // 仅当存在地图数据时才尝试绘制图层内容。
+        this._calcVisibleRange(); // 计算基于相机与缩放的可见网格范围，用于裁剪绘制区域。
+        const assets = window.RPG?.Assets; // 读取全局素材管理器引用，获取 `getTileById` 方法。
+        if (!assets || typeof assets.getTileById !== 'function') {
+          // 若素材管理器尚未就绪，则无法正确绘制贴图，仅在首次检测到时输出告警。
+          if (!this.assetsWarned) {
+            console.warn('[Renderer] Assets 未初始化，跳过地图渲染'); // 输出警告帮助调试加载顺序问题。
+            this.assetsWarned = true; // 标记已输出告警，避免在渲染循环中重复打印。
+          }
+        } else {
+          this.assetsWarned = false; // 一旦素材管理器可用则重置告警标记，便于后续再次检测。
+          // 当素材管理器已就绪时开始遍历图层并绘制切片。
+          for (const layerName of this.layerOrder) {
+            // 遍历固定的图层顺序，确保渲染顺序稳定。
+            const layerGrid = map.layers && map.layers[layerName]; // 读取当前图层的二维数组。
+            if (!Array.isArray(layerGrid)) {
+              // 若图层不存在或结构异常，则跳过该图层避免抛错。
+              continue; // 继续处理后续图层。
+            }
+            for (let gy = this.view.gy0; gy < this.view.gy1; gy += 1) {
+              // 按可见范围逐行遍历当前图层。
+              const row = layerGrid[gy]; // 读取当前行引用，避免重复索引。
+              if (!Array.isArray(row)) {
+                // 若行结构异常则跳过，防止访问未定义元素。
+                continue; // 继续下一行。
+              }
+              for (let gx = this.view.gx0; gx < this.view.gx1; gx += 1) {
+                // 在可见范围内逐列遍历单元格。
+                const placement = row[gx]; // 读取该格的放置信息。
+                if (!placement) {
+                  // 当单元格为空时无需绘制。
+                  continue; // 处理下一列。
+                }
+                const worldX = gx * this.tileSize; // 将格坐标转换为世界坐标 X。
+                const worldY = gy * this.tileSize; // 将格坐标转换为世界坐标 Y。
+                const tileDef = assets.getTileById(placement.tileId); // 根据 tileId 查询素材定义。
+                if (!tileDef) {
+                  // 当素材缺失时绘制红色叉线提示数据异常。
+                  this._drawMissingTile(worldX, worldY); // 调用专用方法绘制缺失提示框。
+                  continue; // 跳过后续贴图绘制逻辑。
+                }
+                this.drawTileImage(tileDef, worldX, worldY, {
+                  // 调用通用贴图绘制方法，根据数据层记录应用旋转与翻转。
+                  rotation: placement.rotation === undefined ? 0 : (placement.rotation | 0), // 使用位运算保证返回整数角度。
+                  alpha: 1, // 地图静态绘制始终使用完全不透明的贴图。
+                  frameIndex: 0, // 当前轮次仅绘制静态首帧，动画将在 R7 实现。
+                  flipX: Boolean(placement.flipX), // 根据数据层记录应用水平翻转。
+                  flipY: Boolean(placement.flipY), // 根据数据层记录应用垂直翻转。
+                });
+              }
+            }
+          }
+        }
+      }
+      this.drawBrushPreview(); // 在所有基础元素之后绘制画笔预览，确保预览层位于地图之上。
       // TODO(R7): 动画帧循环 // 预留后续动画绘制扩展位置。
     },
 
@@ -286,6 +352,30 @@
       this.ctx.restore(); // 恢复上下文状态，避免影响后续绘制。
     },
 
+    _drawMissingTile(worldX, worldY) {
+      // 绘制素材缺失时的红色提示方框与叉线。
+      const screenPos = this.worldToScreen(worldX, worldY); // 将世界坐标转换为屏幕坐标。
+      const zoom = this.camera.zoom; // 缓存当前缩放倍率以计算像素尺寸。
+      const width = this.tileSize * zoom; // 根据缩放换算绘制宽度。
+      const height = this.tileSize * zoom; // 根据缩放换算绘制高度。
+      const style = getComputedStyle(document.documentElement); // 读取全局 CSS 变量集合。
+      const warnColor = (style.getPropertyValue('--warn') || '#e74c3c').trim(); // 获取警告颜色，缺省使用红色。
+      const strokeX = Math.round(screenPos.x) + 0.5; // 对齐到像素中心，避免描边模糊。
+      const strokeY = Math.round(screenPos.y) + 0.5; // 同理对齐 Y 坐标。
+      this.ctx.save(); // 保存当前绘图状态。
+      this.ctx.lineWidth = 2; // 设置描边线宽以突出提示。
+      this.ctx.strokeStyle = warnColor; // 使用警告色绘制边框与叉线。
+      this.ctx.globalAlpha = 0.95; // 略微降低透明度以与背景区分。
+      this.ctx.strokeRect(strokeX, strokeY, width, height); // 绘制缺失图块的边框。
+      this.ctx.beginPath(); // 开启新路径绘制叉线。
+      this.ctx.moveTo(strokeX, strokeY); // 将起点移动到方框左上角。
+      this.ctx.lineTo(strokeX + width, strokeY + height); // 绘制到右下角形成对角线。
+      this.ctx.moveTo(strokeX + width, strokeY); // 将画笔移动到右上角。
+      this.ctx.lineTo(strokeX, strokeY + height); // 绘制到左下角形成另一条对角线。
+      this.ctx.stroke(); // 渲染叉线提示素材缺失。
+      this.ctx.restore(); // 恢复上下文状态，防止影响后续绘制。
+    },
+
     drawBrushPreview() {
       // 绘制画笔预览层，包括素材半透明叠加与网格高亮框。
       if (!this.brush.visible || !this.brush.tileId) {
@@ -298,31 +388,85 @@
         return; // 等待下次渲染。
       }
       const tileDef = assets.getTileById(this.brush.tileId); // 根据当前画笔 id 查询素材定义。
-      if (!tileDef) {
-        // 若未找到对应素材说明 manifest 数据缺失。
-        return; // 直接返回避免报错。
-      }
       const worldX = this.brush.hoverGX * this.tileSize; // 根据网格 X 计算世界坐标 X。
       const worldY = this.brush.hoverGY * this.tileSize; // 根据网格 Y 计算世界坐标 Y。
-      this.drawTileImage(tileDef, worldX, worldY, {
-        rotation: this.brush.rotation, // 让预览沿用当前记录的旋转角度。
-        alpha: this.brush.alpha, // 采用预设透明度呈现半透明效果。
-        frameIndex: 0, // 预览始终展示静态首帧。
-        flipX: false, // 预览阶段不提供水平翻转。
-        flipY: false, // 预览阶段不提供垂直翻转。
-      }); // 调用通用绘制函数在吸附位置绘制半透明素材预览。
+      const map = this.map; // 缓存当前地图引用以检查越界情况。
+      const editor = window.RPG?.Editor; // 获取编辑器实例，用于读取激活图层。
+      let highlightColor = null; // 预留描边颜色变量，稍后根据状态决定使用哪种颜色。
+      let shouldWarn = false; // 标记当前预览是否处于不可落笔状态。
+      if (!map) {
+        // 当尚未加载地图时无法真正落笔。
+        highlightColor = (getComputedStyle(document.documentElement).getPropertyValue('--color-muted') || '#9e9e9e').trim(); // 选择灰色提示仅为占位。
+      } else {
+        // 当存在地图时检查越界与图层匹配。
+        const inBounds = this.brush.hoverGX >= 0 && this.brush.hoverGX < map.width && this.brush.hoverGY >= 0 && this.brush.hoverGY < map.height; // 判断预览是否处于地图范围内。
+        const activeLayer = editor && typeof editor.getActiveLayer === 'function' ? editor.getActiveLayer() : null; // 读取当前激活图层名称。
+        const layerMatch = tileDef && tileDef.layer === activeLayer; // 判断素材定义的图层是否与当前图层一致。
+        shouldWarn = !inBounds || !layerMatch || !tileDef; // 只要越界、图层不匹配或素材缺失就进入警告态。
+        const style = getComputedStyle(document.documentElement); // 读取 CSS 变量集合以获取颜色。
+        const warnColor = (style.getPropertyValue('--warn') || '#e74c3c').trim(); // 提取警告描边颜色。
+        const okColor = (style.getPropertyValue('--color-brush') || 'rgba(77, 182, 172, 0.7)').trim(); // 提取正常描边颜色。
+        highlightColor = shouldWarn ? warnColor : okColor; // 根据状态选择描边颜色。
+        if (tileDef && !shouldWarn) {
+          // 当素材存在且状态允许落笔时绘制半透明贴图。
+          this.drawTileImage(tileDef, worldX, worldY, {
+            rotation: this.brush.rotation, // 让预览沿用当前记录的旋转角度。
+            alpha: this.brush.alpha, // 采用预设透明度呈现半透明效果。
+            frameIndex: 0, // 预览始终展示静态首帧。
+            flipX: false, // 预览阶段暂未提供水平翻转。
+            flipY: false, // 预览阶段暂未提供垂直翻转。
+          });
+        }
+        if (tileDef && shouldWarn) {
+          // 当处于警告态但仍有素材定义时，继续绘制半透明贴图以便对位。
+          this.drawTileImage(tileDef, worldX, worldY, {
+            rotation: this.brush.rotation, // 使用当前旋转角度保持视觉一致。
+            alpha: this.brush.alpha, // 维持半透明效果提示落笔位置。
+            frameIndex: 0, // 仍仅绘制首帧。
+            flipX: false, // 暂不处理水平翻转。
+            flipY: false, // 暂不处理垂直翻转。
+          });
+        }
+      }
       const screenPos = this.worldToScreen(worldX, worldY); // 将格子左上角转换为屏幕坐标，用于绘制高亮框。
       const zoom = this.camera.zoom; // 缓存当前缩放倍率。
       const width = this.tileSize * zoom; // 计算高亮框宽度，随缩放变化。
       const height = this.tileSize * zoom; // 计算高亮框高度。
-      const style = getComputedStyle(document.documentElement); // 读取根节点的 CSS 变量集合。
-      const brushColor = style.getPropertyValue('--color-brush') || 'rgba(77, 182, 172, 0.7)'; // 获取预览高亮颜色，若未定义则使用默认值。
       this.ctx.save(); // 保存上下文状态准备绘制描边框。
       this.ctx.lineWidth = 2; // 设置描边线宽使高亮框更加明显。
-      this.ctx.strokeStyle = brushColor.trim(); // 应用 CSS 变量定义的高亮颜色。
-      this.ctx.globalAlpha = 0.9; // 提高描边透明度，让框更加清晰。
+      this.ctx.strokeStyle = highlightColor || '#888888'; // 当未能读取 CSS 变量时使用灰色回退值。
+      this.ctx.globalAlpha = shouldWarn ? 1 : 0.9; // 警告态使用不透明描边强调提示。
       this.ctx.strokeRect(Math.round(screenPos.x) + 0.5, Math.round(screenPos.y) + 0.5, width, height); // 绘制与网格对齐的矩形描边。
       this.ctx.restore(); // 恢复上下文状态，避免影响后续绘制。
+    },
+
+    _calcVisibleRange() {
+      // 计算当前视口对应的可见网格范围。
+      if (!this.canvas || !this.map) {
+        // 当画布或地图未准备好时，将视口范围重置为零，避免无意义遍历。
+        this.view.gx0 = 0; // 重置左边界。
+        this.view.gy0 = 0; // 重置上边界。
+        this.view.gx1 = 0; // 重置右边界。
+        this.view.gy1 = 0; // 重置下边界。
+        return; // 直接结束计算。
+      }
+      const map = this.map; // 缓存地图引用以便多次使用。
+      const zoom = this.camera.zoom; // 缓存当前缩放倍率。
+      const visibleWidth = this.canvas.width / zoom; // 将画布宽度换算为世界单位。
+      const visibleHeight = this.canvas.height / zoom; // 将画布高度换算为世界单位。
+      const left = this.camera.x; // 计算可视区域左侧世界坐标。
+      const top = this.camera.y; // 计算可视区域顶部世界坐标。
+      const right = left + visibleWidth; // 计算可视区域右侧世界坐标。
+      const bottom = top + visibleHeight; // 计算可视区域底部世界坐标。
+      const buffer = 1; // 为避免裁剪过近，额外扩展一格缓冲区。
+      const rawGX0 = Math.floor(left / this.tileSize) - buffer; // 将左侧世界坐标转换为网格索引并减去缓冲。
+      const rawGY0 = Math.floor(top / this.tileSize) - buffer; // 将顶部世界坐标转换为网格索引并减去缓冲。
+      const rawGX1 = Math.ceil(right / this.tileSize) + buffer; // 将右侧世界坐标转换为网格索引并加上缓冲。
+      const rawGY1 = Math.ceil(bottom / this.tileSize) + buffer; // 将底部世界坐标转换为网格索引并加上缓冲。
+      this.view.gx0 = Math.min(map.width, Math.max(0, rawGX0)); // 将左边界裁剪到 0 与地图宽度之间。
+      this.view.gy0 = Math.min(map.height, Math.max(0, rawGY0)); // 将上边界裁剪到 0 与地图高度之间。
+      this.view.gx1 = Math.min(map.width, Math.max(0, rawGX1)); // 将右边界裁剪到合法范围，避免出现负值。
+      this.view.gy1 = Math.min(map.height, Math.max(0, rawGY1)); // 将下边界裁剪到合法范围。
     },
 
     drawGrid() {

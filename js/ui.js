@@ -12,10 +12,12 @@
     renderer: null, // 缓存渲染器实例引用，方便调用相机接口。
     editor: null, // 缓存编辑器实例引用，读取状态与数据层 API。
     assets: null, // 缓存 Assets 管理器引用，统一访问 manifest 与缩略图功能。
-    status: { map: null, zoom: null, pos: null, brush: null }, // 存储状态栏各个文本节点引用。
+    status: { map: null, layer: null, brush: null, zoom: null, pos: null, hint: null }, // 存储状态栏各个文本节点引用。
     assetPanel: { select: null, search: null, grid: null, errorBanner: null, buttons: [], currentPack: null, ready: false }, // 管理素材面板内部节点与状态。
     panOrigin: { x: 0, y: 0 }, // 记录开始平移时的屏幕坐标，用于计算位移。
     brushRotation: 0, // 记录当前画笔预览的旋转角度，配合状态栏显示。
+    editState: { painting: false, erasing: false, lastGX: null, lastGY: null }, // 记录当前鼠标绘制/擦除的拖拽状态。
+    statusHintTimer: null, // 保存状态栏临时提示的定时器句柄，便于自动清理。
 
     async init({ canvas, toolbar, sidebar, statusbar }) {
       // 初始化方法，接收界面关键节点引用。
@@ -27,6 +29,7 @@
       this.elements.toolbar = toolbar; // 缓存工具栏引用用于插入按钮。
       this.elements.sidebar = sidebar; // 缓存侧边栏引用以便扩展。
       this.elements.statusbar = statusbar; // 缓存状态栏引用便于批量查询节点。
+      this.elements.layerSelect = document.getElementById('layerSelect'); // 获取图层选择下拉框引用方便后续绑定事件。
       this.renderer = window.RPG.Renderer; // 读取全局渲染器实例以便调用图形相关功能。
       this.editor = window.RPG.Editor; // 读取全局编辑器实例以访问数据层 API。
       this.assets = window.RPG.Assets; // 读取全局 Assets 管理器以加载 manifest 与缩略图。
@@ -35,6 +38,7 @@
       this.cacheStatusbarNodes(); // 查询并缓存状态栏节点。
       this.setupStatusbar(); // 设置状态栏默认文本。
       this.setupToolbar(); // 构建工具栏按钮并绑定事件。
+      this.setupLayerSelect(); // 绑定图层下拉框事件并同步初始状态。
       this.setupSidebarStructure(); // 构建素材面板基础结构并绑定输入事件。
       this.bindCanvasEvents(); // 绑定 Canvas 鼠标事件实现相机控制。
       this.bindKeyboardEvents(); // 绑定键盘事件追踪空格状态。
@@ -42,27 +46,19 @@
       this.bindMapEvents(); // 订阅地图与画笔变更事件以更新状态栏。
       // TODO(R8): 精确世界坐标命中 // 预留后续拾取逻辑扩展注释。
       const manifestReady = await this.prepareAssetPanel(); // 加载 manifest 并刷新素材面板。
+      this.renderer.setMap(this.editor.getCurrentMap()); // 初始化阶段同步一次地图引用（可能为 null）。
+      this.renderer.requestRender(); // 触发一次重绘以反映最新的地图与预览状态。
       return { manifestReady }; // 返回加载结果给入口脚本，用于控制日志输出。
     },
 
     cacheStatusbarNodes() {
       // 查询并缓存状态栏内的文本节点。
       this.status.map = document.getElementById('status-map'); // 获取显示地图信息的节点引用。
+      this.status.layer = document.getElementById('status-layer'); // 获取显示当前图层的节点引用。
+      this.status.brush = document.getElementById('status-brush'); // 获取显示画笔信息的节点引用。
       this.status.zoom = document.getElementById('status-zoom'); // 获取显示缩放信息的节点引用。
       this.status.pos = document.getElementById('status-pos'); // 获取显示鼠标坐标的节点引用。
-      if (this.elements.statusbar && !document.getElementById('status-brush')) {
-        // 若状态栏存在且尚未创建画笔显示节点，则动态插入。
-        const separator = document.createTextNode(' | '); // 创建分隔符文本保持排版一致。
-        const brushSpan = document.createElement('span'); // 创建用于显示画笔信息的 span。
-        brushSpan.id = 'status-brush'; // 设置 id 便于后续查询与样式控制。
-        brushSpan.textContent = '画笔: -'; // 初始化画笔显示文本。
-        this.status.map?.after(separator); // 将分隔符插入在地图状态后方。
-        this.elements.statusbar.insertBefore(brushSpan, this.status.zoom || null); // 将画笔节点插入到缩放节点之前。
-        this.status.brush = brushSpan; // 缓存画笔状态节点引用。
-      } else {
-        // 当节点已存在时直接缓存引用。
-        this.status.brush = document.getElementById('status-brush'); // 读取现有画笔状态节点。
-      }
+      this.status.hint = document.getElementById('status-hint'); // 获取临时提示文本节点引用。
     },
 
     setupToolbar() {
@@ -142,6 +138,32 @@
           console.log('[UI] 素材包菜单点击，占位事件'); // 输出日志提醒功能暂未实现。
         });
       }
+    },
+
+    setupLayerSelect() {
+      // 初始化工具栏中的图层选择下拉框并绑定事件。
+      const select = this.elements.layerSelect; // 读取缓存的下拉框引用。
+      if (!select) {
+        // 若元素缺失则输出警告并跳过，等待后续结构修正。
+        console.warn('[UI] 未找到 layerSelect 元素'); // 输出警告帮助定位模板问题。
+        return; // 结束方法，避免绑定事件时报错。
+      }
+      const activeLayer = this.editor.getActiveLayer(); // 读取当前激活图层。
+      select.value = activeLayer; // 将下拉框的选中项同步为当前图层。
+      select.addEventListener('change', () => {
+        // 监听图层切换事件。
+        const nextLayer = select.value; // 读取用户选择的图层名称。
+        try {
+          this.editor.setActiveLayer(nextLayer); // 调用数据层接口切换激活图层。
+          this.updateLayerStatus(nextLayer); // 更新状态栏显示新的图层名称。
+          this.renderer.requestRender(); // 切换图层会影响预览高亮，需要重新渲染。
+        } catch (error) {
+          // 当切换过程中抛出异常时恢复旧值并给出提示。
+          console.warn('[UI] 切换图层失败', error); // 在控制台输出错误详情便于调试。
+          select.value = this.editor.getActiveLayer(); // 恢复下拉框为原先的合法图层。
+          this.showHint('图层切换失败，请检查控制台日志'); // 在状态栏显示临时提示提醒用户。
+        }
+      });
     },
 
     setupSidebarStructure() {
@@ -349,6 +371,65 @@
       this.status.brush.textContent = `画笔: ${display}`; // 更新画笔状态文本。
     },
 
+    updateLayerStatus(layerName) {
+      // 更新状态栏中图层文本显示。
+      if (!this.status.layer) {
+        // 若图层节点缺失则无需更新。
+        return; // 直接结束方法。
+      }
+      const current = layerName || this.editor.getActiveLayer(); // 优先使用传入值，否则读取编辑器状态。
+      this.status.layer.textContent = `图层: ${current || '-'}`; // 写入格式化后的图层名称。
+      if (this.elements.layerSelect && current) {
+        // 当存在下拉框时同步选中项，确保 UI 状态一致。
+        this.elements.layerSelect.value = current; // 强制更新下拉框的 value 避免外部修改失配。
+      }
+    },
+
+    updateMapStatus(detail) {
+      // 更新状态栏中地图信息的显示文本。
+      if (!this.status.map) {
+        // 若节点不存在则无需处理。
+        return; // 直接结束方法。
+      }
+      if (detail && detail.name) {
+        // 当提供 map-changed 事件的 detail 时使用该数据刷新文本。
+        const width = detail.width !== undefined ? detail.width : '-'; // 读取地图宽度，若缺失则使用占位符。
+        const height = detail.height !== undefined ? detail.height : '-'; // 读取地图高度。
+        this.status.map.textContent = `地图: ${detail.name} ${width}×${height}`; // 输出格式化的地图名称与尺寸。
+        return; // 完成更新后提前返回。
+      }
+      const map = this.editor.getCurrentMap(); // 尝试读取当前地图引用以兜底。
+      if (map) {
+        // 当存在地图对象时根据其信息更新文本。
+        this.status.map.textContent = `地图: ${map.name} ${map.width}×${map.height}`; // 使用地图对象刷新显示。
+      } else {
+        // 未加载地图时显示占位文本。
+        this.status.map.textContent = '无地图'; // 表示当前没有地图数据。
+      }
+    },
+
+    showHint(message, duration = 1500) {
+      // 在状态栏的提示区域显示临时文本。
+      if (!this.status.hint) {
+        // 若提示节点不存在则仅在控制台输出信息。
+        console.warn('[UI] hint placeholder missing', message); // 输出警告帮助调试布局。
+        return; // 无法显示提示时直接返回。
+      }
+      if (this.statusHintTimer) {
+        // 若已有定时器在运行则先清除，避免提示相互覆盖。
+        window.clearTimeout(this.statusHintTimer); // 清除旧的定时任务。
+        this.statusHintTimer = null; // 重置句柄以备下次使用。
+      }
+      this.status.hint.textContent = message || ''; // 写入新的提示文本，若 message 为空则清空显示。
+      if (message) {
+        // 当确实有提示文本时才安排定时清除。
+        this.statusHintTimer = window.setTimeout(() => {
+          this.status.hint.textContent = ''; // 到期后清空提示文本。
+          this.statusHintTimer = null; // 清空定时器句柄。
+        }, duration);
+      }
+    },
+
     renderEmptyState(message) {
       // 在素材网格中渲染空状态提示。
       if (!this.assetPanel.grid) {
@@ -386,21 +467,24 @@
 
     setupStatusbar() {
       // 初始化状态栏文本显示。
-      if (this.status.map) {
-        // 当地图信息节点存在时设置默认文本。
-        this.status.map.textContent = '无地图'; // 显示未加载地图的占位文本。
-      }
-      this.updateZoomStatus(); // 使用统一方法同步缩放与旋转显示，初始化为默认状态。
-      if (this.status.pos) {
-        // 当坐标节点存在时初始化为占位符。
-        this.status.pos.textContent = '格: -'; // 表示当前无鼠标网格坐标数据。
-      }
+      this.updateMapStatus(null); // 默认显示未加载地图的状态文本。
+      this.updateLayerStatus(this.editor.getActiveLayer()); // 同步当前激活图层显示。
       this.updateBrushStatus(this.editor.getSelectedTileId()); // 初始化画笔状态显示。
+      this.updateZoomStatus(); // 使用统一方法同步缩放与旋转显示，初始化为默认状态。
+      this.updatePositionStatus(null, null); // 将坐标状态初始化为占位符。
+      if (this.status.hint) {
+        // 若存在临时提示节点则清空文本。
+        this.status.hint.textContent = ''; // 启动时不显示提示文字。
+      }
     },
 
     bindCanvasEvents() {
       // 绑定 Canvas 上的鼠标交互事件。
       const canvas = this.elements.canvas; // 读取缓存的 Canvas 引用。
+      canvas.addEventListener('contextmenu', (event) => {
+        // 禁用默认的右键菜单，避免干扰橡皮擦操作。
+        event.preventDefault(); // 阻止浏览器弹出上下文菜单。
+      });
       canvas.addEventListener('wheel', (event) => {
         // 监听滚轮事件用于调整缩放。
         event.preventDefault(); // 阻止默认滚动行为以保持画布聚焦。
@@ -421,28 +505,54 @@
         }
       });
       canvas.addEventListener('mousedown', (event) => {
-        // 监听鼠标按下事件以触发平移模式。
+        // 监听鼠标按下事件以触发平移或绘制操作。
+        const pointer = this.getPointerInfo(event); // 计算当前指针的屏幕与网格坐标。
+        this.renderer.setBrushHoverGrid(pointer.gridX, pointer.gridY); // 同步画笔预览的吸附格坐标。
+        this.updatePositionStatus(pointer.gridX, pointer.gridY); // 在状态栏显示当前网格位置。
         const isMiddle = event.button === 1; // 判断是否为鼠标中键。
         const isSpaceDrag = event.button === 0 && this.editor.state.isSpaceHold; // 判断是否为空格+左键组合。
         if (isMiddle || isSpaceDrag) {
-          // 满足任一条件则进入平移状态。
+          // 满足任一条件则进入相机平移模式。
           event.preventDefault(); // 阻止默认行为避免浏览器触发特殊操作。
           this.editor.state.isPanning = true; // 更新编辑器状态标记正在平移。
           this.panOrigin.x = event.clientX; // 记录当前屏幕 X 坐标作为起点。
           this.panOrigin.y = event.clientY; // 记录当前屏幕 Y 坐标作为起点。
           document.body.classList.add('grabbing'); // 添加 grabbing 类改变光标样式。
+          return; // 平移模式下无需执行绘制逻辑。
+        }
+        if (event.button === 2) {
+          // 鼠标右键触发橡皮擦行为。
+          event.preventDefault(); // 阻止浏览器默认菜单。
+          const result = this.tryEraseAt(pointer.gridX, pointer.gridY); // 调用数据层尝试删除格子。
+          this.editState.erasing = result.continue; // 根据返回值决定是否进入拖拽删除状态。
+          this.editState.painting = false; // 确保绘制状态被关闭。
+          this.editState.lastGX = pointer.gridX; // 记录上一次操作的格坐标。
+          this.editState.lastGY = pointer.gridY; // 同上记录 Y 坐标。
+          if (result.changed) {
+            // 当确实删除了图块时请求重绘。
+            this.renderer.requestRender(); // 通知渲染器刷新画面。
+          }
+          return; // 右键处理完成后不再继续。
+        }
+        if (event.button === 0) {
+          // 鼠标左键触发绘制行为。
+          event.preventDefault(); // 阻止文本选中等默认行为。
+          const result = this.tryPaintAt(pointer.gridX, pointer.gridY); // 调用数据层尝试落笔。
+          this.editState.painting = result.continue; // 根据返回值决定是否进入拖拽绘制状态。
+          this.editState.erasing = false; // 确保橡皮擦状态被关闭。
+          this.editState.lastGX = pointer.gridX; // 记录上一次绘制的格坐标。
+          this.editState.lastGY = pointer.gridY; // 同上记录 Y 坐标。
+          if (result.changed) {
+            // 当有实际写入时请求重绘。
+            this.renderer.requestRender(); // 通知渲染器刷新画面。
+          }
         }
       });
       canvas.addEventListener('mousemove', (event) => {
-        // 监听鼠标移动事件以更新坐标与执行平移。
-        const rect = canvas.getBoundingClientRect(); // 获取 Canvas 位置与尺寸。
-        const screenX = Math.round(event.clientX - rect.left); // 计算鼠标在画布内的整数 X 坐标。
-        const screenY = Math.round(event.clientY - rect.top); // 计算鼠标在画布内的整数 Y 坐标。
-        const worldPos = this.renderer.screenToWorld(screenX, screenY); // 使用渲染器接口转换为世界坐标。
-        const gridX = Math.floor(worldPos.x / this.renderer.tileSize); // 将世界坐标换算为网格 X。
-        const gridY = Math.floor(worldPos.y / this.renderer.tileSize); // 将世界坐标换算为网格 Y。
-        this.renderer.setBrushHoverGrid(gridX, gridY); // 将最新的网格坐标同步给画笔预览。
-        this.updatePositionStatus(gridX, gridY); // 在状态栏显示当前吸附的网格坐标。
+        // 监听鼠标移动事件以更新坐标、执行平移或连续绘制。
+        const pointer = this.getPointerInfo(event); // 计算当前指针的屏幕与网格坐标。
+        this.renderer.setBrushHoverGrid(pointer.gridX, pointer.gridY); // 同步画笔预览位置。
+        this.updatePositionStatus(pointer.gridX, pointer.gridY); // 在状态栏更新网格坐标显示。
         if (this.editor.state.isPanning) {
           // 当处于平移状态时根据位移调整相机。
           const dx = event.clientX - this.panOrigin.x; // 计算相对于起点的水平位移。
@@ -450,18 +560,49 @@
           this.renderer.translateCamera(dx, dy); // 调用渲染器执行相机平移。
           this.panOrigin.x = event.clientX; // 更新起点 X 供下一次计算增量。
           this.panOrigin.y = event.clientY; // 更新起点 Y 供下一次计算增量。
+          return; // 平移状态下无需继续执行绘制逻辑。
+        }
+        if ((this.editState.painting || this.editState.erasing) && (pointer.gridX !== this.editState.lastGX || pointer.gridY !== this.editState.lastGY)) {
+          // 当处于绘制/擦除拖拽状态且指针移动到新的格子时执行相应操作。
+          if (this.editState.painting) {
+            const result = this.tryPaintAt(pointer.gridX, pointer.gridY); // 在新格子尝试落笔。
+            this.editState.painting = result.continue; // 根据结果决定是否继续拖拽绘制。
+            if (result.changed) {
+              // 仅当有实际写入时请求重绘。
+              this.renderer.requestRender(); // 通知渲染器刷新画面。
+            }
+            if (result.continue) {
+              // 更新最近一次操作的格坐标，避免重复写入同一格。
+              this.editState.lastGX = pointer.gridX;
+              this.editState.lastGY = pointer.gridY;
+            }
+          } else if (this.editState.erasing) {
+            const result = this.tryEraseAt(pointer.gridX, pointer.gridY); // 在新格子尝试删除。
+            this.editState.erasing = result.continue; // 根据结果决定是否继续拖拽删除。
+            if (result.changed) {
+              // 仅当有实际删除时请求重绘。
+              this.renderer.requestRender(); // 通知渲染器刷新画面。
+            }
+            if (result.continue) {
+              // 更新最近一次操作的格坐标。
+              this.editState.lastGX = pointer.gridX;
+              this.editState.lastGY = pointer.gridY;
+            }
+          }
         }
       });
       canvas.addEventListener('mouseup', () => {
-        // 当鼠标在 Canvas 上释放时退出平移模式。
+        // 当鼠标在 Canvas 上释放时退出平移或绘制状态。
         if (this.editor.state.isPanning) {
           // 仅在平移状态下才执行复位逻辑。
           this.editor.state.isPanning = false; // 重置平移标记。
           document.body.classList.remove('grabbing'); // 移除 grabbing 类恢复光标。
         }
+        this.stopEditingStroke(); // 重置绘制与擦除的拖拽状态。
       });
       canvas.addEventListener('mouseleave', () => {
         // 当鼠标离开 Canvas 时清空状态信息。
+        this.stopEditingStroke(); // 终止正在进行的绘制或擦除。
         this.renderer.setBrushVisibility(false); // 鼠标离开画布时关闭画笔预览层。
         this.updatePositionStatus(null, null); // 清空状态栏坐标显示。
         if (this.editor.state.isPanning) {
@@ -477,7 +618,113 @@
           this.editor.state.isPanning = false; // 重置平移标记。
           document.body.classList.remove('grabbing'); // 恢复默认光标。
         }
+        this.stopEditingStroke(); // 重置绘制状态，避免拖拽状态残留。
       });
+    },
+
+    getPointerInfo(event) {
+      // 根据鼠标事件计算屏幕坐标与吸附的网格坐标。
+      const canvas = this.elements.canvas; // 读取 Canvas 引用以获取位置与尺寸。
+      const rect = canvas.getBoundingClientRect(); // 计算 Canvas 在视口中的矩形区域。
+      const screenX = Math.round(event.clientX - rect.left); // 计算相对于 Canvas 左上角的屏幕 X 坐标。
+      const screenY = Math.round(event.clientY - rect.top); // 计算相对于 Canvas 左上角的屏幕 Y 坐标。
+      const worldPos = this.renderer.screenToWorld(screenX, screenY); // 将屏幕坐标转换为世界坐标。
+      const gridX = Math.floor(worldPos.x / this.renderer.tileSize); // 将世界 X 坐标换算为网格索引。
+      const gridY = Math.floor(worldPos.y / this.renderer.tileSize); // 将世界 Y 坐标换算为网格索引。
+      return { screenX, screenY, gridX, gridY }; // 返回指针信息对象，便于调用方使用。
+    },
+
+    tryPaintAt(gx, gy) {
+      // 尝试在指定格坐标落笔，并处理各种失败场景。
+      const map = this.editor.getCurrentMap(); // 读取当前地图引用。
+      if (!map) {
+        // 未加载地图时无法绘制。
+        this.showHint('未加载地图，无法放置'); // 在状态栏显示友好提示。
+        console.warn('[UI] paint ignored: no map'); // 输出警告便于调试。
+        return { changed: false, continue: false }; // 返回阻止继续拖拽的结果。
+      }
+      if (gx < 0 || gx >= map.width || gy < 0 || gy >= map.height) {
+        // 越界时阻止绘制。
+        this.showHint('超出地图范围，无法放置'); // 提示用户越界。
+        console.warn('[UI] paint blocked: out of bounds', gx, gy); // 输出警告便于定位。
+        return { changed: false, continue: false }; // 返回阻止继续拖拽的结果。
+      }
+      const tileId = this.editor.getSelectedTileId(); // 读取当前画笔素材 id。
+      if (!tileId) {
+        // 未选择素材时阻止绘制。
+        this.showHint('未选择素材，无法放置'); // 提示用户先选择素材。
+        console.warn('[UI] paint ignored: no tile selected'); // 输出警告便于调试。
+        return { changed: false, continue: false }; // 返回阻止继续拖拽的结果。
+      }
+      if (!this.assets || typeof this.assets.getTileById !== 'function') {
+        // 素材管理器尚未就绪时无法执行落笔。
+        this.showHint('素材管理器未就绪'); // 提醒用户等待 manifest 加载完成。
+        console.warn('[UI] paint blocked: assets manager unavailable'); // 输出警告便于调试初始化顺序。
+        return { changed: false, continue: false }; // 返回阻止继续拖拽的结果。
+      }
+      const tileDef = this.assets.getTileById(tileId); // 查询素材定义以获取层信息。
+      if (!tileDef) {
+        // 素材定义缺失时阻止绘制。
+        this.showHint(`素材数据缺失: ${tileId}`); // 状态栏提示缺失的素材。
+        console.warn('[UI] paint blocked: tile definition missing', tileId); // 输出警告帮助排查 manifest 问题。
+        return { changed: false, continue: false }; // 返回阻止继续拖拽的结果。
+      }
+      const activeLayer = this.editor.getActiveLayer(); // 读取当前激活图层。
+      if (tileDef.layer !== activeLayer) {
+        // 当素材所属图层与当前激活图层不一致时阻止绘制。
+        this.showHint(`图层不匹配，需要 ${tileDef.layer}`); // 提示用户切换到正确的图层。
+        console.warn('[UI] paint blocked: layer mismatch', tileDef.layer, activeLayer); // 输出警告便于调试。
+        return { changed: false, continue: false }; // 返回阻止继续拖拽的结果。
+      }
+      const brush = {
+        tileId, // 写入素材 id。
+        rotation: this.brushRotation, // 使用当前记录的画笔旋转角度。
+        flipX: false, // R6 暂不支持翻转，统一写入 false。
+        flipY: false, // 同上。
+      }; // 组装传入数据层的画笔描述对象。
+      try {
+        const changed = this.editor.paintAt(gx, gy, brush); // 调用数据层执行落笔。
+        return { changed, continue: true }; // 即便返回 false（重复写入）也允许继续拖拽。
+      } catch (error) {
+        // 捕获数据层抛出的异常，给出提示。
+        console.warn('[UI] paintAt 抛出异常', error); // 输出详细错误信息。
+        this.showHint('放置失败，请检查控制台日志'); // 引导用户查看控制台获取详情。
+        return { changed: false, continue: false }; // 阻止继续拖拽，避免错误重复出现。
+      }
+    },
+
+    tryEraseAt(gx, gy) {
+      // 尝试在指定格坐标删除图块。
+      const map = this.editor.getCurrentMap(); // 读取当前地图引用。
+      if (!map) {
+        // 未加载地图时无法删除。
+        this.showHint('未加载地图，无法删除'); // 提示用户先创建或加载地图。
+        console.warn('[UI] erase ignored: no map'); // 输出警告便于调试。
+        return { changed: false, continue: false }; // 阻止继续拖拽。
+      }
+      if (gx < 0 || gx >= map.width || gy < 0 || gy >= map.height) {
+        // 越界时阻止删除。
+        this.showHint('超出地图范围，无法删除'); // 状态栏提示越界情况。
+        console.warn('[UI] erase blocked: out of bounds', gx, gy); // 输出警告便于定位问题。
+        return { changed: false, continue: false }; // 阻止继续拖拽。
+      }
+      try {
+        const changed = this.editor.eraseAt(gx, gy); // 调用数据层执行删除。
+        return { changed, continue: true }; // 无论是否删除成功都允许继续拖拽橡皮擦。
+      } catch (error) {
+        // 捕获数据层抛出的异常。
+        console.warn('[UI] eraseAt 抛出异常', error); // 输出错误详情。
+        this.showHint('删除失败，请检查控制台日志'); // 提示用户查看控制台。
+        return { changed: false, continue: false }; // 阻止继续拖拽，避免错误重复出现。
+      }
+    },
+
+    stopEditingStroke() {
+      // 重置绘制与擦除相关的拖拽状态。
+      this.editState.painting = false; // 关闭连续绘制状态。
+      this.editState.erasing = false; // 关闭连续擦除状态。
+      this.editState.lastGX = null; // 清空上一次操作的格坐标 X。
+      this.editState.lastGY = null; // 清空上一次操作的格坐标 Y。
     },
 
     bindKeyboardEvents() {
@@ -523,11 +770,15 @@
       // 订阅地图相关自定义事件以更新状态栏。
       window.addEventListener('rpg:map-changed', (event) => {
         // 监听地图变更事件。
-        const detail = event.detail || {}; // 获取事件附带的数据对象。
-        if (this.status.map) {
-          // 若状态栏地图节点存在则更新显示文本。
-          this.status.map.textContent = `名称(${detail.name}) ${detail.width}×${detail.height}`; // 以名称与尺寸格式化显示信息。
+        const detail = event.detail || null; // 获取事件附带的数据对象，可能为空。
+        this.updateMapStatus(detail); // 根据事件信息刷新地图状态文本。
+        this.updateLayerStatus(this.editor.getActiveLayer()); // 同步当前激活图层显示。
+        if (this.elements.layerSelect) {
+          // 确保下拉框与编辑器状态保持一致。
+          this.elements.layerSelect.value = this.editor.getActiveLayer(); // 强制同步 value 避免失配。
         }
+        this.renderer.setMap(this.editor.getCurrentMap()); // 将最新地图引用交给渲染器。
+        this.renderer.requestRender(); // 请求一次重绘以显示最新数据。
       });
       window.addEventListener('rpg:brush-changed', (event) => {
         // 监听画笔素材变更事件以同步状态栏与按钮高亮。
@@ -544,7 +795,7 @@
         return; // 直接结束方法。
       }
       const percentage = Math.round(this.renderer.camera.zoom * 100); // 将缩放倍率转换为百分比并取整。
-      this.status.zoom.textContent = `缩放：${percentage}% | 旋转: ${this.brushRotation}°`; // 同步显示当前缩放与画笔旋转角度。
+      this.status.zoom.textContent = `缩放: ${percentage}% | 旋转: ${this.brushRotation}°`; // 同步显示当前缩放与画笔旋转角度。
     },
 
     updatePositionStatus(gridX, gridY) {
