@@ -34,6 +34,8 @@
     window.RPG.Renderer.requestRender(); // 请求首次绘制以展示网格背景。
     // TODO(R7): 动画帧循环 // 预留后续扩展动画驱动的注释。
 
+    console.log('[RPGCanvas] R5 atlas static draw + brush preview ready'); // 输出第五轮验收所需的核心功能就绪日志。
+
     if (uiInitResult && uiInitResult.manifestReady) {
       // 当素材清单成功加载且面板就绪时输出验收日志。
       console.log('[RPGCanvas] R4 manifest+asset panel ready'); // 输出本轮验收所需的状态日志。

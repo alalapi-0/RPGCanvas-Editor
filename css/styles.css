@@ -14,6 +14,7 @@
   --color-muted: #9e9e9e;
   --color-grid-light: rgba(255, 255, 255, 0.05);
   --color-grid-dark: rgba(0, 0, 0, 0.2);
+  --color-brush: rgba(77, 182, 172, 0.75);
   --toolbar-height: 64px;
   --sidebar-width: 280px;
   --statusbar-height: 32px;
@@ -39,6 +40,14 @@ body {
 }
 
 body.grabbing {
+  cursor: grabbing;
+}
+
+#mapCanvas.brush-visible {
+  cursor: crosshair;
+}
+
+body.grabbing #mapCanvas.brush-visible {
   cursor: grabbing;
 }
 

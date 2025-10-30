@@ -16,6 +16,7 @@
     needsRender: true, // 脏标记，指示当前帧是否需要重新绘制。
     backgroundPattern: null, // 缓存棋盘底纹的 Pattern 对象，避免每帧重复创建。
     rafId: null, // 记录 requestAnimationFrame 的句柄，便于后续扩展管理循环。
+    brush: { tileId: null, rotation: 0, alpha: 0.65, visible: false, hoverGX: 0, hoverGY: 0 }, // 记录画笔预览相关状态，包含素材 id、旋转角、透明度、可见性与吸附的网格坐标。
 
     init(canvasElement) {
       // 初始化方法，接收 Canvas 元素并完成上下文、循环与背景配置。
@@ -167,7 +168,161 @@
         // 当网格开关开启时绘制网格线。
         this.drawGrid(); // 调用 drawGrid 函数渲染 48 像素间隔的网格。
       }
+      this.drawBrushPreview(); // 在所有基础元素之后绘制画笔预览，确保预览层位于网格上方。
       // TODO(R7): 动画帧循环 // 预留后续动画绘制扩展位置。
+    },
+
+    setBrushTile(tileId) {
+      // 设置画笔使用的素材 id，并触发重绘。
+      this.brush.tileId = typeof tileId === 'string' && tileId.trim() ? tileId.trim() : null; // 将传入的素材 id 规范化为字符串或 null。
+      if (!this.brush.tileId) {
+        // 当素材被清空时强制关闭画笔预览，避免显示过期贴图。
+        this.setBrushVisibility(false); // 通过统一方法移除可见性与光标样式。
+      }
+      this.requestRender(); // 更新画笔素材后请求重新渲染以反映新预览。
+    },
+
+    setBrushRotation(rotation) {
+      // 设置画笔预览的旋转角度，仅接受 0/90/180/270。
+      const allowed = [0, 90, 180, 270]; // 定义允许的旋转角度集合。
+      this.brush.rotation = allowed.includes(rotation) ? rotation : this.brush.rotation; // 若传入角度合法则更新，否则保持原值。
+      this.requestRender(); // 旋转变化会影响预览方向，需要重新绘制。
+    },
+
+    setBrushVisibility(visible) {
+      // 控制画笔预览是否显示，并同步光标样式。
+      this.brush.visible = Boolean(visible) && Boolean(this.brush.tileId); // 只有存在素材时才允许显示预览。
+      if (this.canvas) {
+        // 当 Canvas 已初始化时同步 class 控制光标样式。
+        this.canvas.classList.toggle('brush-visible', this.brush.visible); // 根据可见性切换 brush-visible 类。
+      }
+      this.requestRender(); // 状态变化后请求重绘以更新预览层。
+    },
+
+    setBrushHoverGrid(gx, gy) {
+      // 更新画笔预览当前吸附的网格坐标。
+      if (!Number.isInteger(gx) || !Number.isInteger(gy)) {
+        // 若传入的坐标不是整数则忽略本次更新。
+        return; // 直接返回避免写入非法值。
+      }
+      this.brush.hoverGX = gx; // 写入新的网格 X 坐标。
+      this.brush.hoverGY = gy; // 写入新的网格 Y 坐标。
+      this.requestRender(); // 位置变化需要重新绘制预览。
+    },
+
+    getBrushState() {
+      // 返回当前画笔状态的只读快照供其他模块查询。
+      return { ...this.brush }; // 使用浅拷贝返回画笔对象，避免外部直接修改内部状态。
+    },
+
+    drawTileImage(tileDef, worldX, worldY, opts = {}) {
+      // 在指定世界坐标绘制一个素材切片，可应用旋转、透明度与翻转。
+      if (!tileDef || typeof tileDef !== 'object') {
+        // 若未提供合法的素材定义则直接返回。
+        return; // 结束绘制以避免报错。
+      }
+      const assets = window.RPG?.Assets; // 读取全局 Assets 管理器引用。
+      if (!assets) {
+        // 若素材管理器尚未就绪则跳过绘制。
+        return; // 结束方法等待初始化完成。
+      }
+      const cacheKey = typeof tileDef.src === 'string' ? tileDef.src.trim() : ''; // 规范化图像缓存键值。
+      const image = cacheKey && assets.images ? assets.images.get(cacheKey) : null; // 从缓存中尝试获取已经加载的图像对象。
+      if (!(image instanceof HTMLImageElement) || !image.complete || image.naturalWidth === 0) {
+        // 若图像尚未加载完成则暂时不绘制。
+        assets.getImageFor(tileDef.src).then(() => { // 调用素材管理器加载或复用图集图片，并在加载完成后执行回调。
+          // 调用 Assets.getImageFor 触发图像加载，并在完成后请求重绘以确保最终显示。
+          this.requestRender(); // 图像加载完成后安排一次重新渲染以展示结果。
+        }).catch((error) => { // 若加载 Promise 进入拒绝态则在此捕获，避免异常冒泡中断渲染循环。
+          // 当图片加载失败时捕获错误仅输出警告。
+          console.warn('[Renderer] tile image load failed', tileDef.id, error); // 输出日志辅助排查问题。
+        });
+        return; // 等待下一帧重新渲染。
+      }
+      const options = {
+        rotation: 0, // 预设默认旋转角度为 0 度。
+        alpha: 1, // 默认完全不透明，便于覆盖时调节透明度。
+        frameIndex: 0, // 默认选择第 0 帧，静态素材只显示首帧。
+        flipX: false, // 默认不进行水平翻转。
+        flipY: false, // 默认不进行垂直翻转。
+        ...opts, // 合并调用方提供的选项覆盖默认值。
+      }; // 合并调用方传入的选项与默认值。
+      const rect = tileDef.rect || { x: 0, y: 0, width: this.tileSize, height: this.tileSize }; // 获取素材在图集中的矩形定义。
+      const frameWidth = rect.width; // 读取单帧宽度。
+      const frameHeight = rect.height; // 读取单帧高度。
+      const totalFrames = tileDef.animated ? Math.max(1, tileDef.animated) : 1; // 读取素材的帧数，至少为 1。
+      const frameIndex = Math.min(options.frameIndex, totalFrames - 1); // 将帧索引限制在合法范围内。
+      const sx = rect.x + frameWidth * frameIndex; // 计算源图像区域的 X 坐标。
+      const sy = rect.y; // 源图像区域的 Y 坐标为 rect.y。
+      if (sx + frameWidth > image.naturalWidth || sy + frameHeight > image.naturalHeight) {
+        // 若源区域越界则放弃绘制避免报错。
+        console.warn('[Renderer] tile rect out of bounds', tileDef.id); // 输出警告帮助检查 manifest 配置。
+        return; // 提前结束绘制流程。
+      }
+      const screenPos = this.worldToScreen(worldX, worldY); // 将世界坐标转换为屏幕坐标（左上角）。
+      const zoom = this.camera.zoom; // 缓存当前缩放倍率减少重复访问。
+      const destWidth = frameWidth * zoom; // 根据缩放计算目标宽度。
+      const destHeight = frameHeight * zoom; // 根据缩放计算目标高度。
+      const centerX = screenPos.x + destWidth / 2; // 计算绘制时的中心点 X。
+      const centerY = screenPos.y + destHeight / 2; // 计算绘制时的中心点 Y。
+      this.ctx.save(); // 保存当前绘图上下文状态以便应用变换。
+      this.ctx.imageSmoothingEnabled = false; // 禁用插值保持像素风格清晰。
+      this.ctx.globalAlpha = options.alpha; // 设置全局透明度控制预览或图层的可见度。
+      this.ctx.translate(centerX, centerY); // 将坐标原点移动到素材中心以便旋转。
+      const radians = (options.rotation * Math.PI) / 180; // 将角度转换为弧度供 canvas 旋转使用。
+      if (options.rotation !== 0) {
+        // 当需要旋转时应用旋转变换。
+        this.ctx.rotate(radians); // 旋转上下文以改变绘制方向。
+      }
+      const scaleX = options.flipX ? -1 : 1; // 根据 flipX 计算水平缩放因子。
+      const scaleY = options.flipY ? -1 : 1; // 根据 flipY 计算垂直缩放因子。
+      if (scaleX !== 1 || scaleY !== 1) {
+        // 当存在翻转需求时应用缩放变换。
+        this.ctx.scale(scaleX, scaleY); // 通过 scale 实现翻转效果。
+      }
+      const drawX = -destWidth / 2; // 计算 drawImage 的起点 X，使素材围绕中心绘制。
+      const drawY = -destHeight / 2; // 计算 drawImage 的起点 Y，使素材围绕中心绘制。
+      this.ctx.drawImage(image, sx, sy, frameWidth, frameHeight, drawX, drawY, destWidth, destHeight); // 将图集中的指定区域绘制到目标位置。
+      this.ctx.restore(); // 恢复上下文状态，避免影响后续绘制。
+    },
+
+    drawBrushPreview() {
+      // 绘制画笔预览层，包括素材半透明叠加与网格高亮框。
+      if (!this.brush.visible || !this.brush.tileId) {
+        // 当预览不可见或未选择素材时跳过绘制。
+        return; // 直接返回。
+      }
+      const assets = window.RPG?.Assets; // 获取全局素材管理器引用。
+      if (!assets) {
+        // 若素材管理器尚未初始化则无法绘制预览。
+        return; // 等待下次渲染。
+      }
+      const tileDef = assets.getTileById(this.brush.tileId); // 根据当前画笔 id 查询素材定义。
+      if (!tileDef) {
+        // 若未找到对应素材说明 manifest 数据缺失。
+        return; // 直接返回避免报错。
+      }
+      const worldX = this.brush.hoverGX * this.tileSize; // 根据网格 X 计算世界坐标 X。
+      const worldY = this.brush.hoverGY * this.tileSize; // 根据网格 Y 计算世界坐标 Y。
+      this.drawTileImage(tileDef, worldX, worldY, {
+        rotation: this.brush.rotation, // 让预览沿用当前记录的旋转角度。
+        alpha: this.brush.alpha, // 采用预设透明度呈现半透明效果。
+        frameIndex: 0, // 预览始终展示静态首帧。
+        flipX: false, // 预览阶段不提供水平翻转。
+        flipY: false, // 预览阶段不提供垂直翻转。
+      }); // 调用通用绘制函数在吸附位置绘制半透明素材预览。
+      const screenPos = this.worldToScreen(worldX, worldY); // 将格子左上角转换为屏幕坐标，用于绘制高亮框。
+      const zoom = this.camera.zoom; // 缓存当前缩放倍率。
+      const width = this.tileSize * zoom; // 计算高亮框宽度，随缩放变化。
+      const height = this.tileSize * zoom; // 计算高亮框高度。
+      const style = getComputedStyle(document.documentElement); // 读取根节点的 CSS 变量集合。
+      const brushColor = style.getPropertyValue('--color-brush') || 'rgba(77, 182, 172, 0.7)'; // 获取预览高亮颜色，若未定义则使用默认值。
+      this.ctx.save(); // 保存上下文状态准备绘制描边框。
+      this.ctx.lineWidth = 2; // 设置描边线宽使高亮框更加明显。
+      this.ctx.strokeStyle = brushColor.trim(); // 应用 CSS 变量定义的高亮颜色。
+      this.ctx.globalAlpha = 0.9; // 提高描边透明度，让框更加清晰。
+      this.ctx.strokeRect(Math.round(screenPos.x) + 0.5, Math.round(screenPos.y) + 0.5, width, height); // 绘制与网格对齐的矩形描边。
+      this.ctx.restore(); // 恢复上下文状态，避免影响后续绘制。
     },
 
     drawGrid() {

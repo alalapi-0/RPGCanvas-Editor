@@ -15,6 +15,7 @@
     status: { map: null, zoom: null, pos: null, brush: null }, // 存储状态栏各个文本节点引用。
     assetPanel: { select: null, search: null, grid: null, errorBanner: null, buttons: [], currentPack: null, ready: false }, // 管理素材面板内部节点与状态。
     panOrigin: { x: 0, y: 0 }, // 记录开始平移时的屏幕坐标，用于计算位移。
+    brushRotation: 0, // 记录当前画笔预览的旋转角度，配合状态栏显示。
 
     async init({ canvas, toolbar, sidebar, statusbar }) {
       // 初始化方法，接收界面关键节点引用。
@@ -29,6 +30,8 @@
       this.renderer = window.RPG.Renderer; // 读取全局渲染器实例以便调用图形相关功能。
       this.editor = window.RPG.Editor; // 读取全局编辑器实例以访问数据层 API。
       this.assets = window.RPG.Assets; // 读取全局 Assets 管理器以加载 manifest 与缩略图。
+      const rendererBrush = this.renderer.getBrushState ? this.renderer.getBrushState() : null; // 尝试读取渲染器提供的画笔快照。
+      this.brushRotation = rendererBrush ? rendererBrush.rotation : 0; // 将初始旋转角同步到 UI 状态，默认 0 度。
       this.cacheStatusbarNodes(); // 查询并缓存状态栏节点。
       this.setupStatusbar(); // 设置状态栏默认文本。
       this.setupToolbar(); // 构建工具栏按钮并绑定事件。
@@ -308,6 +311,18 @@
       this.editor.setSelectedTile(tileId); // 调用数据层接口写入当前画笔素材。
       this.syncGridSelection(tileId); // 更新素材按钮的选中样式。
       this.updateBrushStatus(tileId); // 同步状态栏中的画笔文本。
+      this.renderer.setBrushTile(tileId); // 将选中的素材 id 同步给渲染器用于预览。
+      if (tileId) {
+        // 当选择具体素材时检查鼠标是否正位于画布内部。
+        const hoveringCanvas = this.elements.canvas.matches(':hover'); // 使用 :hover 判断指针是否悬停在 Canvas 上。
+        if (hoveringCanvas) {
+          // 若鼠标已在画布上，则立即开启预览提供反馈。
+          this.renderer.setBrushVisibility(true); // 显示画笔预览层。
+        }
+      } else {
+        // 当 tileId 为空表示清空画笔，需要隐藏预览层。
+        this.renderer.setBrushVisibility(false); // 关闭画笔预览，避免显示过期素材。
+      }
     },
 
     syncGridSelection(tileId) {
@@ -375,13 +390,10 @@
         // 当地图信息节点存在时设置默认文本。
         this.status.map.textContent = '无地图'; // 显示未加载地图的占位文本。
       }
-      if (this.status.zoom) {
-        // 当缩放节点存在时初始化为 100%。
-        this.status.zoom.textContent = '缩放：100%'; // 设置默认缩放显示。
-      }
+      this.updateZoomStatus(); // 使用统一方法同步缩放与旋转显示，初始化为默认状态。
       if (this.status.pos) {
         // 当坐标节点存在时初始化为占位符。
-        this.status.pos.textContent = '坐标：-'; // 表示当前无鼠标位置数据。
+        this.status.pos.textContent = '格: -'; // 表示当前无鼠标网格坐标数据。
       }
       this.updateBrushStatus(this.editor.getSelectedTileId()); // 初始化画笔状态显示。
     },
@@ -399,6 +411,14 @@
         const anchorY = event.clientY - rect.top; // 计算鼠标相对 Canvas 的 Y 坐标。
         this.renderer.setZoom(nextZoom, anchorX, anchorY); // 调用渲染器接口执行缩放。
         this.updateZoomStatus(); // 更新状态栏中的缩放百分比。
+      });
+      canvas.addEventListener('mouseenter', () => {
+        // 当鼠标进入 Canvas 区域时决定是否显示画笔预览。
+        const tileId = this.editor.getSelectedTileId(); // 读取当前画笔素材 id。
+        if (tileId) {
+          // 仅当存在画笔素材时才显示预览。
+          this.renderer.setBrushVisibility(true); // 通知渲染器开启画笔预览层。
+        }
       });
       canvas.addEventListener('mousedown', (event) => {
         // 监听鼠标按下事件以触发平移模式。
@@ -418,7 +438,11 @@
         const rect = canvas.getBoundingClientRect(); // 获取 Canvas 位置与尺寸。
         const screenX = Math.round(event.clientX - rect.left); // 计算鼠标在画布内的整数 X 坐标。
         const screenY = Math.round(event.clientY - rect.top); // 计算鼠标在画布内的整数 Y 坐标。
-        this.updatePositionStatus(screenX, screenY); // 更新状态栏中的屏幕坐标显示。
+        const worldPos = this.renderer.screenToWorld(screenX, screenY); // 使用渲染器接口转换为世界坐标。
+        const gridX = Math.floor(worldPos.x / this.renderer.tileSize); // 将世界坐标换算为网格 X。
+        const gridY = Math.floor(worldPos.y / this.renderer.tileSize); // 将世界坐标换算为网格 Y。
+        this.renderer.setBrushHoverGrid(gridX, gridY); // 将最新的网格坐标同步给画笔预览。
+        this.updatePositionStatus(gridX, gridY); // 在状态栏显示当前吸附的网格坐标。
         if (this.editor.state.isPanning) {
           // 当处于平移状态时根据位移调整相机。
           const dx = event.clientX - this.panOrigin.x; // 计算相对于起点的水平位移。
@@ -438,6 +462,7 @@
       });
       canvas.addEventListener('mouseleave', () => {
         // 当鼠标离开 Canvas 时清空状态信息。
+        this.renderer.setBrushVisibility(false); // 鼠标离开画布时关闭画笔预览层。
         this.updatePositionStatus(null, null); // 清空状态栏坐标显示。
         if (this.editor.state.isPanning) {
           // 若离开时仍处于平移状态需强制结束。
@@ -459,6 +484,8 @@
       // 绑定键盘事件以追踪空格按压状态。
       window.addEventListener('keydown', (event) => {
         // 监听键盘按下事件。
+        const targetTag = event.target && event.target.tagName ? event.target.tagName.toLowerCase() : ''; // 读取事件源标签名判断是否在输入框内。
+        const isTyping = targetTag === 'input' || targetTag === 'textarea'; // 标记当前是否处于文本输入场景。
         if (event.code === 'Space') {
           // 当按下空格键时执行逻辑。
           if (!this.editor.state.isSpaceHold) {
@@ -466,6 +493,13 @@
             this.editor.state.isSpaceHold = true; // 标记空格已按下。
           }
           event.preventDefault(); // 阻止浏览器默认滚动行为。
+        }
+        if (!isTyping && (event.key === 'r' || event.key === 'R')) {
+          // 当焦点不在输入框且按下 R 键时旋转画笔预览。
+          const nextRotation = (this.brushRotation + 90) % 360; // 以 90 度为步进循环计算下一个角度。
+          this.brushRotation = nextRotation; // 更新 UI 记录的旋转角度值。
+          this.renderer.setBrushRotation(nextRotation); // 通知渲染器应用新的预览旋转角。
+          this.updateZoomStatus(); // 同步状态栏中旋转角度的显示文本。
         }
       });
       window.addEventListener('keyup', (event) => {
@@ -510,21 +544,21 @@
         return; // 直接结束方法。
       }
       const percentage = Math.round(this.renderer.camera.zoom * 100); // 将缩放倍率转换为百分比并取整。
-      this.status.zoom.textContent = `缩放：${percentage}%`; // 更新状态栏显示当前缩放值。
+      this.status.zoom.textContent = `缩放：${percentage}% | 旋转: ${this.brushRotation}°`; // 同步显示当前缩放与画笔旋转角度。
     },
 
-    updatePositionStatus(screenX, screenY) {
-      // 更新状态栏中的鼠标屏幕坐标显示。
+    updatePositionStatus(gridX, gridY) {
+      // 更新状态栏中的鼠标网格坐标显示。
       if (!this.status.pos) {
         // 若未缓存坐标节点则结束方法。
         return; // 直接返回。
       }
-      if (typeof screenX === 'number' && typeof screenY === 'number') {
-        // 当提供有效数值时显示具体坐标。
-        this.status.pos.textContent = `坐标：${screenX}, ${screenY}`; // 更新状态栏文本为当前坐标。
+      if (Number.isInteger(gridX) && Number.isInteger(gridY)) {
+        // 当提供有效的格坐标时显示具体数值。
+        this.status.pos.textContent = `格: ${gridX}, ${gridY}`; // 更新状态栏文本为当前吸附的网格位置。
       } else {
         // 否则恢复为占位文本。
-        this.status.pos.textContent = '坐标：-'; // 表示无有效坐标信息。
+        this.status.pos.textContent = '格: -'; // 表示当前没有有效的网格信息。
       }
     },
   };
