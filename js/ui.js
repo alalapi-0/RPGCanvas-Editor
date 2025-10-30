@@ -347,6 +347,14 @@
         badge.setAttribute('aria-label', `${tileDef.animated} 帧动画`); // 提供辅助功能文本描述。
         button.appendChild(badge); // 将徽标插入按钮右上角。
       }
+      if (this.renderer && typeof this.renderer.shouldUseAutoTile16 === 'function' && this.renderer.shouldUseAutoTile16(tileDef)) {
+        // 当渲染器判断素材属于 A1 自动拼角大组时添加 Auto16 徽标。
+        const autoBadge = document.createElement('span'); // 创建 Auto16 徽标元素。
+        autoBadge.className = 'asset-auto16-badge'; // 应用专用样式类以便后续美化。
+        autoBadge.textContent = 'Auto16'; // 设置徽标文本提示其自动拼角属性。
+        autoBadge.setAttribute('aria-label', 'A1 16 掩码自动拼角'); // 为辅助技术提供完整描述。
+        button.appendChild(autoBadge); // 将徽标插入按钮，通常位于动画帧徽标附近。
+      }
       button.addEventListener('click', () => {
         // 绑定点击事件以更新画笔选择。
         this.handleTileSelection(tileDef.id); // 调用内部方法设置当前画笔并刷新状态。
