@@ -333,6 +333,11 @@
       // 读取当前画笔选中的素材 id。
       return this.state.selectedTileId; // 返回 state 中保存的字符串或 null。
     },
+
+    getBrushState() {
+      // 返回画笔相关状态的只读快照供外部调试使用。
+      return { tileId: this.state.selectedTileId }; // 仅暴露当前选中的素材 id，避免直接修改内部状态。
+    },
   };
 
   window.RPG = window.RPG || {}; // 确保全局命名空间存在，避免覆盖其他模块。
