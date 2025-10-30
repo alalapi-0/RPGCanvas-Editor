@@ -273,69 +273,6 @@
       return placement ? { ...placement } : null; // 返回浅拷贝的对象避免外部直接修改内部引用。
     },
 
-    getNeighborMask(x, y, groupId) {
-      // 计算指定格子的四向邻接掩码，仅统计同组 A1 自动地形。
-      const map = this.state.currentMap; // 读取当前地图引用，若尚未加载则直接返回 0。
-      if (!map || !map.layers || !map.layers.ground) {
-        // 当地图或 ground 层缺失时视为四向均无连接。
-        return 0; // 返回 0 作为兜底掩码。
-      }
-      if (!Number.isInteger(x) || !Number.isInteger(y)) {
-        // 坐标必须为整数才能对应网格索引。
-        return 0; // 返回 0 避免抛出异常。
-      }
-      if (typeof groupId !== 'string' || !groupId) {
-        // 缺少有效组标识时无法判断邻接关系。
-        return 0; // 返回 0 表示无邻接。
-      }
-      const width = map.width; // 缓存地图宽度以进行越界检查。
-      const height = map.height; // 缓存地图高度以进行越界检查。
-      const grid = map.layers.ground; // 读取 ground 层二维数组。
-      const assets = window.RPG?.Assets; // 获取素材管理器以查找 tile 定义。
-      const auto16 = window.RPG?.AutoTile16; // 获取自动拼角工具以计算组标识。
-      if (!assets || typeof assets.getTileById !== 'function' || !auto16 || typeof auto16.getGroupId !== 'function') {
-        // 依赖模块未就绪时无法计算邻接。
-        return 0; // 返回 0 等待后续重试。
-      }
-      let mask = 0; // 初始化掩码值。
-      const directions = [
-        { dx: 0, dy: -1, bit: 1 }, // 北方向的偏移与掩码位。
-        { dx: 1, dy: 0, bit: 2 }, // 东方向的偏移与掩码位。
-        { dx: 0, dy: 1, bit: 4 }, // 南方向的偏移与掩码位。
-        { dx: -1, dy: 0, bit: 8 }, // 西方向的偏移与掩码位。
-      ]; // 列出四个方向的检查定义。
-      directions.forEach((dir) => {
-        // 遍历每个方向判断是否存在同组地形。
-        const nx = x + dir.dx; // 计算邻居格的 X 坐标。
-        const ny = y + dir.dy; // 计算邻居格的 Y 坐标。
-        if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
-          // 越界时直接跳过该方向。
-          return; // 继续处理其他方向。
-        }
-        const row = grid[ny]; // 读取邻居所在的行数组。
-        if (!Array.isArray(row)) {
-          // 行数据缺失时跳过。
-          return; // 继续检查下一个方向。
-        }
-        const placement = row[nx]; // 读取邻居单元格的放置信息。
-        if (!placement || typeof placement.tileId !== 'string') {
-          // 空白格或无效数据不计入掩码。
-          return; // 继续处理其他方向。
-        }
-        const tileDef = assets.getTileById(placement.tileId); // 查询邻居使用的素材定义。
-        if (!tileDef) {
-          // 素材缺失时无法判断是否同组。
-          return; // 继续检查下一个方向。
-        }
-        const neighborGroup = auto16.getGroupId(tileDef); // 计算邻居的大组标识。
-        if (neighborGroup && neighborGroup === groupId) {
-          // 当标识一致时设置对应的掩码位。
-          mask |= dir.bit; // 通过位或写入掩码。
-        }
-      });
-      return mask & 0xF; // 返回最终掩码并确保落在 0-15 范围内。
-    },
-
     setTile(layerName, x, y, placement) {
       // 在指定位置写入新的 TilePlacement 数据。
       this._assertLayer(layerName); // 校验图层名称是否合法。
