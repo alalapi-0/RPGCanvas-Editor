@@ -4,12 +4,8 @@
   "packs": [
     {
       "name": "Dungeon_A1",
-      "src": "Dungeon_A1.png",
-      "tiles": [
-        { "id": "a1.water.cell00", "rect": [0, 0, 32, 32], "layer": "ground", "animated": 3, "animStrideX": 64, "walkable": false },
-        { "id": "a1.water.cell11", "rect": [32, 32, 32, 32], "layer": "ground", "animated": 3, "animStrideX": 64, "walkable": false },
-        { "id": "a1.water.static.cell11", "rect": [224, 32, 32, 32], "layer": "ground", "walkable": false }
-      ]
+      "src": "tiles/Dungeon_A1.png",
+      "tiles": []
     },
     {
       "name": "Dungeon_A2",

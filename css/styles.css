@@ -194,6 +194,193 @@ body.grabbing #mapCanvas.brush-visible {
   border-radius: 8px;
 }
 
+.asset-grid.group-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 0;
+  background-image: none;
+  border: none;
+}
+
+.dungeon-a1-group-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background-color: rgba(0, 0, 0, 0.25);
+}
+
+.group-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.group-card-title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.group-card-title-ja {
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.group-card-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, 56px);
+  gap: 10px;
+}
+
+.group-tile-button {
+  width: 56px;
+  height: 56px;
+}
+
+.debug-section {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background-color: rgba(0, 0, 0, 0.25);
+}
+
+.debug-section summary {
+  padding: 10px 12px;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.debug-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+}
+
+.debug-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.debug-row input[type='range'] {
+  flex: 1;
+}
+
+.debug-frame-label {
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.debug-stats {
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.btn-small {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.btn-primary {
+  background-color: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #0f1414;
+}
+
+.btn-primary:hover {
+  background-color: #5ad2c6;
+  border-color: #5ad2c6;
+}
+
+.dungeon-a1-modal {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.dungeon-a1-modal.hidden {
+  display: none;
+}
+
+.modal-body {
+  background-color: #1f1f1f;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 20px;
+  width: 420px;
+  max-width: 90vw;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+.modal-body h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.modal-slot-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.modal-slot {
+  border: 1px dashed var(--color-border);
+  border-radius: 8px;
+  padding: 10px;
+  background-color: rgba(0, 0, 0, 0.3);
+  cursor: grab;
+  user-select: none;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.modal-slot.dragging {
+  opacity: 0.6;
+}
+
+.modal-slot.drag-over {
+  border-color: var(--color-accent);
+  background-color: rgba(77, 182, 172, 0.2);
+}
+
+.slot-index {
+  display: block;
+  font-size: 12px;
+  color: var(--color-muted);
+  margin-bottom: 4px;
+}
+
+.slot-name strong {
+  font-size: 13px;
+  display: block;
+}
+
+.slot-name small {
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .asset-tile-button {
   width: 56px;
   height: 56px;

@@ -14,6 +14,7 @@
     assets: null, // 缓存 Assets 管理器引用，统一访问 manifest 与缩略图功能。
     status: { map: null, layer: null, brush: null, zoom: null, pos: null, hint: null }, // 存储状态栏各个文本节点引用。
     assetPanel: { select: null, search: null, grid: null, errorBanner: null, buttons: [], currentPack: null, ready: false }, // 管理素材面板内部节点与状态。
+    dungeonA1Debug: { root: null, gridToggle: null, frameSlider: null, frameLabel: null, frameReset: null, stats: null, reorderButton: null, modal: null, slotNodes: [], assignments: [], meta: null }, // 记录 Dungeon_A1 调试面板引用与状态。
     panOrigin: { x: 0, y: 0 }, // 记录开始平移时的屏幕坐标，用于计算位移。
     brushRotation: 0, // 记录当前画笔预览的旋转角度，配合状态栏显示。
     editState: { painting: false, erasing: false, lastGX: null, lastGY: null }, // 记录当前鼠标绘制/擦除的拖拽状态。
@@ -204,9 +205,93 @@
       grid.className = 'asset-grid'; // 应用定义好的网格样式。
       grid.setAttribute('aria-label', 'Asset Thumbnails'); // 添加辅助功能标签方便朗读器。
 
+      const debugDetails = document.createElement('details'); // 创建 Dungeon_A1 调试折叠面板。
+      debugDetails.className = 'debug-section'; // 应用样式类便于定位。
+      const debugSummary = document.createElement('summary'); // 创建折叠标题。
+      debugSummary.textContent = 'Dungeon_A1 Debug'; // 设置标题文本。
+      debugDetails.appendChild(debugSummary); // 将标题插入折叠面板。
+      const debugContent = document.createElement('div'); // 创建折叠内部容器。
+      debugContent.className = 'debug-content'; // 应用样式类。
+
+      const gridToggleLabel = document.createElement('label'); // 创建显示网格的复选框标签。
+      gridToggleLabel.className = 'debug-row'; // 应用行布局样式。
+      const gridToggle = document.createElement('input'); // 创建复选框。
+      gridToggle.type = 'checkbox';
+      gridToggle.id = 'dungeonA1GridToggle';
+      const gridToggleText = document.createElement('span');
+      gridToggleText.textContent = '显示 4×4 切片网格';
+      gridToggleLabel.appendChild(gridToggle);
+      gridToggleLabel.appendChild(gridToggleText);
+
+      const frameRow = document.createElement('div'); // 创建帧滑杆行容器。
+      frameRow.className = 'debug-row';
+      const frameLabel = document.createElement('label');
+      frameLabel.setAttribute('for', 'dungeonA1FrameSlider');
+      frameLabel.textContent = '帧滑杆';
+      frameRow.appendChild(frameLabel);
+      const frameSlider = document.createElement('input');
+      frameSlider.type = 'range';
+      frameSlider.id = 'dungeonA1FrameSlider';
+      frameSlider.min = '0';
+      frameSlider.max = '2';
+      frameSlider.step = '1';
+      frameSlider.value = '0';
+      frameRow.appendChild(frameSlider);
+      const frameValue = document.createElement('span');
+      frameValue.className = 'debug-frame-label';
+      frameValue.textContent = '当前帧: 自动';
+      frameRow.appendChild(frameValue);
+      const frameReset = document.createElement('button');
+      frameReset.type = 'button';
+      frameReset.className = 'btn btn-small';
+      frameReset.textContent = '跟随动画';
+      frameRow.appendChild(frameReset);
+
+      const statsLine = document.createElement('div');
+      statsLine.className = 'debug-stats';
+      statsLine.textContent = '统计：-';
+
+      const reorderButton = document.createElement('button');
+      reorderButton.type = 'button';
+      reorderButton.className = 'btn btn-small';
+      reorderButton.textContent = '名称重排';
+
+      debugContent.appendChild(gridToggleLabel);
+      debugContent.appendChild(frameRow);
+      debugContent.appendChild(statsLine);
+      debugContent.appendChild(reorderButton);
+      debugDetails.appendChild(debugContent);
+
+      const modalOverlay = document.createElement('div'); // 创建名称重排弹窗容器。
+      modalOverlay.className = 'dungeon-a1-modal hidden';
+      const modalBody = document.createElement('div');
+      modalBody.className = 'modal-body';
+      const modalTitle = document.createElement('h3');
+      modalTitle.textContent = '重排名称 → Slot';
+      modalBody.appendChild(modalTitle);
+      const modalGrid = document.createElement('div');
+      modalGrid.className = 'modal-slot-grid';
+      modalBody.appendChild(modalGrid);
+      const modalActions = document.createElement('div');
+      modalActions.className = 'modal-actions';
+      const modalCancel = document.createElement('button');
+      modalCancel.type = 'button';
+      modalCancel.className = 'btn btn-small';
+      modalCancel.textContent = '取消';
+      const modalApply = document.createElement('button');
+      modalApply.type = 'button';
+      modalApply.className = 'btn btn-primary btn-small';
+      modalApply.textContent = '应用并下载';
+      modalActions.appendChild(modalCancel);
+      modalActions.appendChild(modalApply);
+      modalBody.appendChild(modalActions);
+      modalOverlay.appendChild(modalBody);
+
       panelBody.appendChild(packGroup); // 将下拉框表单分组插入面板。
       panelBody.appendChild(searchGroup); // 将搜索表单分组插入面板。
       panelBody.appendChild(grid); // 将素材网格插入面板底部。
+      panelBody.appendChild(debugDetails); // 插入调试折叠面板。
+      panelBody.appendChild(modalOverlay); // 插入重排弹窗（默认隐藏）。
 
       this.assetPanel.select = packSelect; // 缓存下拉框引用供后续使用。
       this.assetPanel.search = searchInput; // 缓存搜索输入框引用。
@@ -215,6 +300,14 @@
       this.assetPanel.currentPack = null; // 当前选中的素材包名称初始化为空。
       this.assetPanel.animRafId = null; // 记录面板动画循环的 requestAnimationFrame 句柄。
       this.assetPanel.lastFrame = -1; // 记录上一帧用于检测是否需要重绘缩略图。
+      this.dungeonA1Debug.root = debugDetails; // 缓存调试折叠面板引用。
+      this.dungeonA1Debug.gridToggle = gridToggle; // 缓存复选框引用。
+      this.dungeonA1Debug.frameSlider = frameSlider; // 缓存滑杆引用。
+      this.dungeonA1Debug.frameLabel = frameValue; // 缓存帧文本引用。
+      this.dungeonA1Debug.frameReset = frameReset; // 缓存复位按钮引用。
+      this.dungeonA1Debug.stats = statsLine; // 缓存统计显示。
+      this.dungeonA1Debug.reorderButton = reorderButton; // 缓存重排按钮。
+      this.dungeonA1Debug.modal = { overlay: modalOverlay, grid: modalGrid, cancel: modalCancel, apply: modalApply }; // 缓存弹窗结构。
 
       packSelect.addEventListener('change', () => {
         // 监听素材包切换事件。
@@ -223,6 +316,34 @@
       searchInput.addEventListener('input', () => {
         // 监听搜索输入变化。
         this.renderAssetGrid(); // 根据新的关键字重新渲染素材列表。
+      });
+      gridToggle.addEventListener('change', () => {
+        // 切换 slot 网格覆盖层。
+        this.renderer.setDungeonA1SlotGridVisible(gridToggle.checked);
+      });
+      frameSlider.addEventListener('input', () => {
+        // 调整帧覆盖值。
+        const value = parseInt(frameSlider.value, 10);
+        this.renderer.setDungeonA1FrameOverride(value);
+        frameValue.textContent = `当前帧: ${value}`;
+      });
+      frameReset.addEventListener('click', () => {
+        // 恢复自动帧播放。
+        this.renderer.setDungeonA1FrameOverride(null);
+        frameSlider.value = '0';
+        frameValue.textContent = '当前帧: 自动';
+      });
+      reorderButton.addEventListener('click', () => {
+        // 打开名称重排弹窗。
+        this.openDungeonA1ReorderModal();
+      });
+      modalCancel.addEventListener('click', () => {
+        // 关闭弹窗不保存。
+        this.closeDungeonA1Modal();
+      });
+      modalApply.addEventListener('click', () => {
+        // 应用新顺序并提供下载。
+        this.applyDungeonA1OrderFromModal();
       });
     },
 
@@ -286,6 +407,7 @@
       }
       this.assetPanel.lastFrame = -1; // 重置上一帧记录，确保重新绘制缩略图。
       this.assetPanel.grid.innerHTML = ''; // 清空网格内容准备重新填充。
+      this.assetPanel.grid.classList.remove('group-mode'); // 默认移除组卡模式样式。
       this.assetPanel.buttons = []; // 清空按钮引用数组。
       const packs = this.assets.getPacks(); // 读取最新的素材包列表。
       const pack = packs.find((item) => item.name === this.assetPanel.currentPack); // 查找当前选择的素材包。
@@ -295,7 +417,25 @@
         this.updateBrushStatus(this.editor.getSelectedTileId()); // 仍然同步状态栏画笔显示。
         return; // 结束渲染流程。
       }
+      const isDungeonPack = pack.name === 'Dungeon_A1'; // 判断是否为 Dungeon_A1 包。
+      if (this.dungeonA1Debug.root) {
+        // 根据当前素材包控制调试折叠面板的可见性。
+        this.dungeonA1Debug.root.style.display = isDungeonPack ? '' : 'none';
+      }
       const keyword = this.assetPanel.search.value.trim().toLowerCase(); // 读取并规范化搜索关键字。
+      if (!keyword && isDungeonPack && Array.isArray(pack.groups) && pack.groups.length > 0) {
+        // 当未输入关键字且存在组数据时渲染组卡视图。
+        this.renderDungeonA1GroupCards(pack); // 调用专用方法渲染 16 组卡片。
+        this.syncGridSelection(this.editor.getSelectedTileId()); // 更新按钮选中态。
+        this.paintAssetThumbnailsOnce(); // 刷新缩略图以反映当前帧。
+        this.ensureAssetPanelAnimation(true); // 启动动画循环保持缩略图更新。
+        this.syncDungeonA1DebugControls(); // 同步调试面板开关与帧显示。
+        return; // 结束渲染流程。
+      }
+      if (this.dungeonA1Debug.root && !isDungeonPack) {
+        // 当切换到其他素材包时更新调试面板的控件显示。
+        this.syncDungeonA1DebugControls();
+      }
       const tiles = pack.tiles.filter((tile) => {
         // 根据关键字过滤素材列表。
         if (!keyword) {
@@ -319,6 +459,293 @@
       this.syncGridSelection(this.editor.getSelectedTileId()); // 根据当前画笔状态刷新选中样式。
       this.paintAssetThumbnailsOnce(); // 初始渲染完成后立即绘制一次缩略图，确保显示最新帧。
       this.ensureAssetPanelAnimation(true); // 启动面板动画循环以驱动动态缩略图。
+      if (isDungeonPack) {
+        // 在列表模式下也要同步调试状态与统计信息。
+        this.syncDungeonA1DebugControls();
+      }
+    },
+
+    renderDungeonA1GroupCards(pack) {
+      // 渲染 Dungeon_A1 的 16 组卡片视图。
+      const container = this.assetPanel.grid; // 读取网格容器。
+      container.innerHTML = ''; // 清空旧内容。
+      container.classList.add('group-mode'); // 应用组卡模式样式。
+      this.assetPanel.buttons = []; // 重置按钮缓存数组。
+      if (!Array.isArray(pack.groups)) {
+        // 若缺少组数据则直接返回。
+        return;
+      }
+      pack.groups.forEach((group) => {
+        // 遍历每个组构建卡片。
+        const card = document.createElement('div'); // 创建组卡容器。
+        card.className = 'dungeon-a1-group-card'; // 应用样式类。
+        const header = document.createElement('div'); // 创建标题栏。
+        header.className = 'group-card-header'; // 应用样式类。
+        const titleBox = document.createElement('div'); // 创建标题文本容器。
+        titleBox.className = 'group-card-title'; // 应用样式类。
+        const titleEn = document.createElement('span'); // 英文名称节点。
+        titleEn.textContent = group && group.label && group.label.en ? group.label.en : `Group ${group.index}`; // 写入英文标签。
+        titleBox.appendChild(titleEn); // 插入英文文本。
+        if (group && group.label && group.label.ja && group.label.ja !== group.label.en) {
+          // 当存在不同的日文标签时附加显示。
+          const titleJa = document.createElement('span'); // 创建日文标签节点。
+          titleJa.className = 'group-card-title-ja'; // 应用样式类。
+          titleJa.textContent = group.label.ja; // 写入日文文本。
+          titleBox.appendChild(titleJa); // 插入到标题容器。
+        }
+        header.appendChild(titleBox); // 将标题容器插入标题栏。
+        const badge = document.createElement('span'); // 创建动画帧徽标。
+        badge.className = 'asset-anim-badge'; // 复用动画徽标样式。
+        badge.textContent = '3f'; // 固定显示三帧。
+        header.appendChild(badge); // 将徽标插入标题栏。
+        card.appendChild(header); // 将标题栏插入卡片。
+        const tileWrap = document.createElement('div'); // 创建组内按钮容器。
+        tileWrap.className = 'group-card-tiles'; // 应用网格样式。
+        if (Array.isArray(group.tiles)) {
+          group.tiles.forEach((tile) => {
+            // 遍历组内 6 个静态格创建按钮。
+            const button = this.createTileButton(tile); // 调用现有方法生成按钮。
+            button.classList.add('group-tile-button'); // 应用额外样式区分组内按钮。
+            tileWrap.appendChild(button); // 插入按钮到容器。
+            this.assetPanel.buttons.push(button); // 将按钮记录到缓存数组。
+          });
+        }
+        card.appendChild(tileWrap); // 将按钮容器插入卡片。
+        container.appendChild(card); // 将卡片插入主容器。
+      });
+      this.updateDungeonA1DebugStats(); // 更新统计信息显示。
+    },
+
+    updateDungeonA1DebugStats() {
+      // 根据 Assets 返回的数据更新调试统计文本。
+      if (!this.dungeonA1Debug.stats) {
+        return; // 缺少统计节点时直接返回。
+      }
+      const meta = this.assets.getDungeonA1Meta(); // 读取切片元数据。
+      if (!meta || !Array.isArray(meta.groups)) {
+        this.dungeonA1Debug.stats.textContent = '统计：-'; // 当数据缺失时显示占位。
+        return;
+      }
+      const groupCount = meta.groups.length; // 计算组数量。
+      const tileCount = meta.groups.reduce((sum, group) => sum + (Array.isArray(group.tiles) ? group.tiles.length : 0), 0); // 汇总 tile 总数。
+      this.dungeonA1Debug.stats.textContent = `统计：${groupCount} 组 / ${tileCount} 片`; // 更新统计文本。
+    },
+
+    syncDungeonA1DebugControls() {
+      // 同步调试面板控件状态与渲染器、素材数据。
+      const debug = this.dungeonA1Debug; // 缓存调试状态引用。
+      if (!debug.root) {
+        return; // 若调试面板尚未构建则直接返回。
+      }
+      const renderer = this.renderer; // 读取渲染器引用。
+      const showGrid = renderer && renderer.debug && renderer.debug.dungeonA1 ? renderer.debug.dungeonA1.showSlotGrid : false; // 读取网格开关状态。
+      if (debug.gridToggle) {
+        debug.gridToggle.checked = showGrid; // 同步复选框状态。
+      }
+      const override = renderer ? renderer.getDungeonA1FrameOverride() : null; // 读取帧覆盖值。
+      if (debug.frameSlider) {
+        debug.frameSlider.value = override !== null ? String(override) : '0'; // 在覆盖存在时写入对应的值，否则复位到 0。
+      }
+      if (debug.frameLabel) {
+        debug.frameLabel.textContent = override === null ? '当前帧: 自动' : `当前帧: ${override}`; // 更新文本显示。
+      }
+      this.updateDungeonA1DebugStats(); // 刷新统计信息。
+    },
+
+    openDungeonA1ReorderModal() {
+      // 打开名称重排弹窗并初始化拖拽数据。
+      const modal = this.dungeonA1Debug.modal; // 读取弹窗引用。
+      if (!modal || !modal.overlay || !modal.grid) {
+        return; // 若结构缺失则直接返回。
+      }
+      const meta = this.assets.getDungeonA1Meta(); // 获取最新的名称与顺序数据。
+      if (!meta || !Array.isArray(meta.names) || !Array.isArray(meta.order)) {
+        this.showHint('Dungeon_A1 元数据尚未加载'); // 提示用户素材尚未准备好。
+        return;
+      }
+      const assignments = new Array(meta.names.length).fill(null); // 准备 slot→名称索引映射。
+      meta.order.forEach((slotNumber, nameIndex) => {
+        const slotIdx = Number(slotNumber) - 1; // 将 1 基索引转换为 0 基。
+        if (slotIdx >= 0 && slotIdx < assignments.length) {
+          assignments[slotIdx] = nameIndex; // 记录名称索引。
+        }
+      });
+      for (let i = 0; i < assignments.length; i += 1) {
+        if (!Number.isInteger(assignments[i])) {
+          assignments[i] = i; // 当映射缺失时回退到同序索引。
+        }
+      }
+      this.dungeonA1Debug.assignments = assignments; // 保存映射数组供拖拽使用。
+      this.dungeonA1Debug.meta = meta; // 保存元数据以便刷新文案。
+      modal.grid.innerHTML = ''; // 清空旧的格子。
+      this.dungeonA1Debug.slotNodes = []; // 重置格子节点数组。
+      assignments.forEach((nameIndex, slotIdx) => {
+        // 为每个 slot 创建拖拽单元格。
+        const cell = this._createDungeonA1SlotCell(slotIdx + 1, nameIndex, meta.names); // 生成单元格。
+        modal.grid.appendChild(cell); // 插入单元格。
+        this.dungeonA1Debug.slotNodes.push(cell); // 存储引用以便刷新显示。
+      });
+      modal.overlay.classList.remove('hidden'); // 显示弹窗。
+    },
+
+    closeDungeonA1Modal() {
+      // 关闭名称重排弹窗。
+      const modal = this.dungeonA1Debug.modal; // 读取弹窗引用。
+      if (!modal || !modal.overlay) {
+        return; // 若结构缺失则直接返回。
+      }
+      modal.overlay.classList.add('hidden'); // 恢复隐藏状态。
+    },
+
+    _createDungeonA1SlotCell(slotIndex, nameIndex, names) {
+      // 创建可拖拽的 slot 单元格 DOM。
+      const cell = document.createElement('div'); // 创建单元格容器。
+      cell.className = 'modal-slot'; // 应用样式类。
+      cell.draggable = true; // 启用原生拖拽。
+      cell.dataset.slot = String(slotIndex); // 记录 slot 编号。
+      const indexLabel = document.createElement('span'); // 创建 slot 号标签。
+      indexLabel.className = 'slot-index'; // 应用样式类。
+      indexLabel.textContent = `Slot ${slotIndex}`; // 显示 slot 编号。
+      cell.appendChild(indexLabel); // 插入编号标签。
+      const nameBox = document.createElement('div'); // 创建名称容器。
+      nameBox.className = 'slot-name'; // 应用样式类。
+      const entry = names[nameIndex]; // 读取对应名称。
+      const enText = entry && entry.en ? entry.en : `Name ${nameIndex + 1}`; // 计算英文文本。
+      const enNode = document.createElement('strong'); // 创建英文节点。
+      enNode.textContent = enText; // 写入英文标签。
+      nameBox.appendChild(enNode); // 插入英文节点。
+      if (entry && entry.ja && entry.ja !== enText) {
+        const br = document.createElement('br'); // 创建换行符。
+        nameBox.appendChild(br); // 插入换行。
+        const jaNode = document.createElement('small'); // 创建日文节点。
+        jaNode.textContent = entry.ja; // 写入日文文本。
+        nameBox.appendChild(jaNode); // 插入日文节点。
+      }
+      cell.appendChild(nameBox); // 将名称容器插入单元格。
+      cell.addEventListener('dragstart', (event) => {
+        // 开始拖拽时记录来源 slot。
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = 'move'; // 指定拖拽效果。
+          event.dataTransfer.setData('text/plain', String(slotIndex)); // 写入来源 slot。
+        }
+        cell.classList.add('dragging'); // 添加样式反馈。
+      });
+      cell.addEventListener('dragend', () => {
+        // 拖拽结束时移除样式。
+        cell.classList.remove('dragging');
+        cell.classList.remove('drag-over');
+      });
+      cell.addEventListener('dragover', (event) => {
+        // 允许拖拽经过当前单元格。
+        event.preventDefault();
+        cell.classList.add('drag-over');
+      });
+      cell.addEventListener('dragleave', () => {
+        // 拖拽离开时移除高亮。
+        cell.classList.remove('drag-over');
+      });
+      cell.addEventListener('drop', (event) => {
+        // 处理拖拽释放逻辑。
+        event.preventDefault();
+        cell.classList.remove('drag-over');
+        if (!event.dataTransfer) {
+          return;
+        }
+        const fromSlot = parseInt(event.dataTransfer.getData('text/plain'), 10); // 读取来源 slot。
+        const toSlot = slotIndex; // 当前目标 slot。
+        if (Number.isInteger(fromSlot) && fromSlot !== toSlot) {
+          this.swapDungeonA1Assignments(fromSlot - 1, toSlot - 1); // 交换映射数据。
+          this.refreshDungeonA1ModalCells(); // 刷新显示文本。
+        }
+      });
+      return cell; // 返回构建完成的单元格。
+    },
+
+    swapDungeonA1Assignments(fromIndex, toIndex) {
+      // 在拖拽操作中交换两个 slot 的名称索引。
+      const assignments = this.dungeonA1Debug.assignments; // 读取映射数组。
+      if (!Array.isArray(assignments)) {
+        return; // 若映射不存在则直接返回。
+      }
+      if (fromIndex < 0 || toIndex < 0 || fromIndex >= assignments.length || toIndex >= assignments.length) {
+        return; // 超出范围时忽略。
+      }
+      const temp = assignments[fromIndex]; // 暂存来源索引。
+      assignments[fromIndex] = assignments[toIndex]; // 交换两个位置的值。
+      assignments[toIndex] = temp;
+    },
+
+    refreshDungeonA1ModalCells() {
+      // 根据 assignments 数组刷新弹窗中每个 slot 的名称。
+      const slots = this.dungeonA1Debug.slotNodes; // 读取单元格节点数组。
+      const assignments = this.dungeonA1Debug.assignments; // 读取映射数组。
+      const meta = this.dungeonA1Debug.meta; // 读取名称元数据。
+      if (!Array.isArray(slots) || !Array.isArray(assignments) || !meta || !Array.isArray(meta.names)) {
+        return; // 缺少必要数据时直接返回。
+      }
+      slots.forEach((cell, index) => {
+        // 遍历每个单元格更新文本。
+        const nameIndex = assignments[index]; // 读取当前 slot 对应的名称索引。
+        const entry = meta.names[nameIndex]; // 读取名称对象。
+        const enText = entry && entry.en ? entry.en : `Name ${nameIndex + 1}`; // 计算英文显示。
+        const nameBox = cell.querySelector('.slot-name'); // 查找名称容器。
+        if (nameBox) {
+          nameBox.innerHTML = ''; // 清空旧内容。
+          const enNode = document.createElement('strong');
+          enNode.textContent = enText;
+          nameBox.appendChild(enNode);
+          if (entry && entry.ja && entry.ja !== enText) {
+            const br = document.createElement('br');
+            nameBox.appendChild(br);
+            const jaNode = document.createElement('small');
+            jaNode.textContent = entry.ja;
+            nameBox.appendChild(jaNode);
+          }
+        }
+      });
+    },
+
+    applyDungeonA1OrderFromModal() {
+      // 将弹窗中的映射结果写回 Assets，并触发下载。
+      const assignments = this.dungeonA1Debug.assignments; // 读取当前映射。
+      const meta = this.dungeonA1Debug.meta; // 读取名称元数据。
+      const modal = this.dungeonA1Debug.modal; // 读取弹窗引用。
+      if (!Array.isArray(assignments) || !meta || !Array.isArray(meta.names) || !modal || !modal.overlay) {
+        return; // 缺少必要数据时终止操作。
+      }
+      const total = meta.names.length; // 名称总数。
+      const nextOrder = new Array(total).fill(0); // 创建新的 order 数组。
+      assignments.forEach((nameIndex, slotIdx) => {
+        if (Number.isInteger(nameIndex) && nameIndex >= 0 && nameIndex < total) {
+          nextOrder[nameIndex] = slotIdx + 1; // 写入 slot 编号（1 基）。
+        }
+      });
+      const normalized = this.assets.updateDungeonA1Order(nextOrder); // 调用 Assets 更新组标签。
+      if (normalized) {
+        this.downloadDungeonA1Order(normalized); // 触发 JSON 下载。
+        this.renderAssetGrid(); // 重新渲染素材面板以应用最新标签。
+        this.showHint('Dungeon_A1 顺序已更新，已下载 map.json'); // 在状态栏提示用户。
+      } else {
+        this.showHint('顺序应用失败，请查看控制台'); // 更新失败时提示检查日志。
+      }
+      this.closeDungeonA1Modal(); // 关闭弹窗恢复页面状态。
+    },
+
+    downloadDungeonA1Order(orderArray) {
+      // 创建包含最新 order 的 JSON 文件并触发浏览器下载。
+      if (!Array.isArray(orderArray)) {
+        return; // 非数组输入时直接返回。
+      }
+      const payload = JSON.stringify({ order: orderArray }, null, 2); // 构造格式化 JSON 字符串。
+      const blob = new Blob([payload], { type: 'application/json' }); // 基于字符串创建 Blob 对象。
+      const url = URL.createObjectURL(blob); // 生成临时下载链接。
+      const link = document.createElement('a'); // 创建隐藏的超链接节点。
+      link.href = url; // 指向临时链接。
+      link.download = 'Dungeon_A1.map.json'; // 设置下载文件名。
+      document.body.appendChild(link); // 将链接插入文档以便触发点击。
+      link.click(); // 主动触发点击开始下载。
+      document.body.removeChild(link); // 下载触发后移除节点。
+      URL.revokeObjectURL(url); // 释放临时链接占用的资源。
     },
 
     createTileButton(tileDef) {
@@ -388,7 +815,11 @@
           // 若上下文获取失败则跳过。
           return; // 继续下一个按钮。
         }
-        const frameIndex = tileDef.animated !== undefined ? frame : 0; // 根据素材是否动画决定绘制帧。
+        let frameIndex = 0; // 初始化缩略图帧索引。
+        if (tileDef.animated !== undefined) {
+          const resolver = typeof this.renderer._resolveFrameForTile === 'function' ? this.renderer._resolveFrameForTile.bind(this.renderer) : null; // 检查渲染器是否暴露帧解析方法。
+          frameIndex = resolver ? resolver(tileDef, frame) : frame; // 若存在解析方法则复用，否则使用当前全局帧。
+        }
         assets.drawToCanvas(ctx, tileDef, 0, 0, 48, 48, frameIndex); // 调用共享绘制函数更新缩略图。
       });
       this.assetPanel.lastFrame = frame; // 记录本次绘制使用的帧索引。
@@ -423,10 +854,12 @@
             // 若无法获取上下文则跳过。
             return; // 继续下一个按钮。
           }
-          const frameIndex = tileDef.animated !== undefined ? frame : 0; // 确定要绘制的帧索引。
+          let frameIndex = 0; // 初始化绘制帧索引。
           if (tileDef.animated !== undefined) {
-            // 当素材具有动画时标记需要持续循环。
-            hasAnimated = true; // 记录存在动画素材。
+            // 当素材具备动画时调用渲染器解析帧索引。
+            const resolver = typeof renderer._resolveFrameForTile === 'function' ? renderer._resolveFrameForTile.bind(renderer) : null; // 检查是否存在帧解析方法。
+            frameIndex = resolver ? resolver(tileDef, frame) : frame; // 使用解析结果或全局帧索引。
+            hasAnimated = true; // 记录存在动画素材需要持续循环。
           }
           assets.drawToCanvas(ctx, tileDef, 0, 0, 48, 48, frameIndex); // 绘制当前帧缩略图。
         });
@@ -567,6 +1000,7 @@
         // 若网格不存在则直接返回。
         return; // 等待结构修复。
       }
+      this.assetPanel.grid.classList.remove('group-mode'); // 进入空状态时移除组卡样式。
       const placeholder = document.createElement('div'); // 创建提示文本容器。
       placeholder.className = 'asset-empty'; // 应用空状态样式。
       placeholder.textContent = message; // 写入提示文本说明当前状态。
