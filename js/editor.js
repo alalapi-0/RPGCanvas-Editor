@@ -14,6 +14,7 @@
       layers: ['ground', 'structure', 'prop', 'overlay', 'decal'], // 受支持的图层名称列表，用于校验输入。
       isPanning: false, // 是否处于画布平移状态，供 UI 模块读取。
       isSpaceHold: false, // 是否按住空格键，供 UI 模块决定平移模式。
+      selectedTileId: null, // 当前画笔选中的素材 id，初始为空表示未选择。
     },
 
     init() {
@@ -22,6 +23,7 @@
       this.state.activeLayer = 'ground'; // 恢复激活图层为默认的 ground 层。
       this.state.isPanning = false; // 清空平移状态标记，避免历史状态影响交互。
       this.state.isSpaceHold = false; // 清空空格按压标记，确保键盘状态正确。
+      this.state.selectedTileId = null; // 重置画笔素材选择，等待 UI 在加载 manifest 后设置。
       console.log('[Editor] init state', { activeLayer: this.state.activeLayer }); // 输出初始化日志便于调试。
     },
 
@@ -302,6 +304,34 @@
     getActiveLayer() {
       // 获取当前激活的图层名称。
       return this.state.activeLayer; // 返回 state 中记录的图层名。
+    },
+
+    setSelectedTile(tileId) {
+      // 设置当前画笔选中的素材 id，可传入字符串或 null。
+      let normalized = null; // 预设规范化后的 id 默认为 null。
+      if (tileId !== null && tileId !== undefined) {
+        // 当提供了非空参数时执行字符串校验。
+        if (typeof tileId !== 'string' || !tileId.trim()) {
+          // 若传入的值不是非空字符串则抛出错误提示调用方。
+          throw new Error('[Editor] setSelectedTile requires string id'); // 抛出错误防止写入非法 id。
+        }
+        normalized = tileId.trim(); // 去除首尾空格得到规范化 id。
+      }
+      if (this.state.selectedTileId === normalized) {
+        // 若新旧值一致则无需更新，直接结束。
+        return; // 避免重复派发事件与状态刷新。
+      }
+      this.state.selectedTileId = normalized; // 写入新的选中素材 id。
+      const event = new CustomEvent('rpg:brush-changed', {
+        // 创建自定义事件通知 UI 画笔素材发生变化。
+        detail: { tileId: normalized }, // 附带当前选中素材 id，null 表示未选中。
+      });
+      window.dispatchEvent(event); // 将事件派发到全局 window，供 UI 监听更新状态栏。
+    },
+
+    getSelectedTileId() {
+      // 读取当前画笔选中的素材 id。
+      return this.state.selectedTileId; // 返回 state 中保存的字符串或 null。
     },
   };
 

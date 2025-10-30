@@ -7,6 +7,7 @@ RPGCanvas Editor 是一个基于原生 HTML5 Canvas 的 RPG Maker 风格 2D 地�
 - **R1**：搭建最小可运行页面框架，完成布局、模块占位与初始化日志。
 - **R2**：实现网格绘制与基础相机系统，支持平移、缩放及状态栏反馈。
 - **R3**：建立地图数据模型、图层网格与基础数据层 API，为后续素材渲染与编辑工具打基础。
+- **R4**：加载素材 manifest，完成素材包索引与素材面板的交互基础。
 
 ## R2 新增说明：网格、相机平移、缩放
 - Canvas 采用脏渲染循环，仅在状态改变时重新绘制，提高性能。
@@ -19,6 +20,13 @@ RPGCanvas Editor 是一个基于原生 HTML5 Canvas 的 RPG Maker 风格 2D 地�
 - 每个图层使用二维数组 `TileGrid`，单元格可存储 `TilePlacement` 或 `null`，方便序列化与调试。
 - `Editor` 模块新增纯数据层 API，可创建地图、读写/删除单格图块并执行越界与参数校验。
 - UI 状态栏新增地图信息显示；工具栏附加调试按钮，便于在验收时验证数据读写流程。
+
+## R4 新增说明：素材清单与素材面板
+- 新增 `Assets` 管理器，负责加载 `assets/manifest.json`，对 `tileSize`、`packs`、`tile.rect` 等关键字段进行校验。
+- 所有素材在加载阶段建立 `tileId -> tileDef` 索引，控制台可通过 `Assets.getTileById('dgn.chest')` 查询定义。
+- 素材面板提供素材包下拉、`tileId` 搜索过滤与缩略图按钮，点击后调用 `Editor.setSelectedTile()` 更新画笔。
+- 缩略图采用 `Assets.makeTileThumb()` 生成的 48×48 离屏 Canvas；缺失图集或越界时以红底黑叉兜底并输出警告。
+- 状态栏追加“画笔”字段实时显示当前选中的 `tileId`，为后续绘制工具奠定 UI 基础。
 
 ## 数据结构 Schema
 ```js
@@ -54,6 +62,29 @@ RPGCanvas Editor 是一个基于原生 HTML5 Canvas 的 RPG Maker 风格 2D 地�
     blocks: undefined          // boolean|undefined：阻挡属性覆盖
   }
   ```
+
+## manifest schema
+- `tileSize`：全局单元格像素尺寸，RPGCanvas 固定为 48，若 manifest 中出现其他值会在加载时抛错。
+- `version`：manifest 文件自身版本号，便于后续兼容策略，本轮样例为 `0.2.0`。
+- `packs[]`：素材包数组，每项包含 `name`（下拉菜单显示名）、`src`（图集文件名）和 `tiles[]`。
+- `tiles[].id`：素材唯一标识字符串，用于画笔与索引。
+- `tiles[].rect`：`[x, y, w, h]` 数组，描述首帧的像素区域，宽高必须等于 48。
+- `tiles[].layer`：素材所在图层，限定在 `ground / structure / prop / overlay / decal`。
+- `tiles[].animated`：可选的帧数，缺省视为 1，本轮缩略图仅取第 1 帧显示。
+- `tiles[].walkable` / `tiles[].blocks`：可选布尔值，覆盖默认通行/阻挡属性。
+- `tiles[].affordances`：可选字符串数组，描述额外交互标签（如 `stairs_up`、`ladder`）。
+- `tiles[].occluderTopPx`：可选非负整数，表示墙体遮挡高度，供后续遮挡渲染使用。
+
+## 如何扩充 manifest
+1. 依据图集的 48×48 网格确定左上角坐标，将像素值填写到 `rect` 数组中。
+2. 建议先为每个素材包录入少量条目测试校验，通过后再批量补全，避免一次性出错难以定位。
+3. 为动画素材设置 `animated` 帧数，仍以首帧静态预览；后续 R7 将补上帧循环展示。
+4. 扩写完成后可在控制台执行 `Assets.tileIndex` 或 `Assets.getTileById(id)` 检查索引结果。
+
+## 缩略图生成策略
+- `Assets.makeTileThumb()` 使用离屏 Canvas 生成 48×48 缩略图，并禁用插值以保持像素风格。
+- 对于动画素材，仅绘制第 1 帧；R7 将在素材面板实现循环播放。
+- 若图集缺失或 `rect` 超出范围，会绘制红底黑叉兜底，并输出 `[Assets]` 警告日志帮助排查。
 
 ## API 文档（Editor 数据层）
 - `Editor.createNewMap(name, width, height) -> MapData`
@@ -108,9 +139,10 @@ RPGCanvas Editor 是一个基于原生 HTML5 Canvas 的 RPG Maker 风格 2D 地�
 │  ├─ renderer.js          # 渲染器，实现网格、相机与脏渲染循环
 │  ├─ editor.js            # 编辑器状态与地图数据模型
 │  ├─ ui.js                # UI 交互逻辑，绑定工具栏与相机控制
+│  ├─ assets.js            # manifest 加载、素材索引与缩略图生成
 │  └─ io.js                # 导入导出工具，提供 JSON 读写校验
 ├─ assets/
-│  └─ manifest.json        # 素材清单占位，记录 tileSize 与版本
+│  └─ manifest.json        # 示例素材清单，提供最小可运行的五个素材包
 ├─ data/
 │  └─ .keep                # 占位文件，保持目录以存放后续示例数据
 └─ README.md               # 项目文档（本文件）
@@ -120,6 +152,15 @@ RPGCanvas Editor 是一个基于原生 HTML5 Canvas 的 RPG Maker 风格 2D 地�
 1. 直接双击 `index.html`，使用现代浏览器（推荐 Chrome / Edge）打开即可预览。
 2. 若浏览器策略限制本地文件访问，可使用 VSCode Live Server 或任意静态服务器启动根目录。
 3. 打开浏览器开发者工具，可在控制台看到启动日志与数据模型就绪提示，验证功能是否正常。
+
+## 验收步骤（R4）
+1. 打开 `index.html`，侧边栏会在 manifest 加载完成后显示素材包下拉、搜索框与素材缩略图网格。
+2. 默认选中首个素材包（示例为 `Dungeon_A1`），可看到 `dgn.water`、`dgn.lava` 等缩略图。
+3. 点击任意缩略图，状态栏的“画笔”字段更新为对应 `tileId`，按钮进入 `.selected` 高亮。
+4. 切换素材包或输入关键字（如 `ladder`）可实时过滤缩略图列表。
+5. 控制台保持无报错；若 PNG 缺失或 `rect` 越界，缩略图显示红底黑叉并输出 `[Assets]` 警告。
+6. 在控制台执行 `Assets.getTileById('dgn.chest')`，返回的对象包含 `layer`、`rect` 等字段。
+7. 控制台出现日志 `[RPGCanvas] R4 manifest+asset panel ready`，说明素材面板初始化完成。
 
 ## 验收步骤（R3）
 1. 打开 `index.html`，点击工具栏“新建 50×30 地图”，状态栏应显示 `名称(Map001) 50×30`。
@@ -153,6 +194,7 @@ RPGCanvas Editor 是一个基于原生 HTML5 Canvas 的 RPG Maker 风格 2D 地�
 - **第 15 轮**：完成文档、单元测试与发布准备。
 
 ## 变更日志
+- **R4**：完成素材清单加载、素材面板筛选与画笔状态联动。
 - **R3**：完成地图数据模型、图层 API、状态栏地图信息与基础导入导出校验。
 - **R2**：完成 Canvas 网格、相机平移/缩放与状态栏联动。
 - **R1**：构建基础布局框架与模块化脚手架。
