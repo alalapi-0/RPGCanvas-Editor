@@ -206,6 +206,7 @@ body.grabbing #mapCanvas.brush-visible {
   justify-content: center;
   cursor: pointer;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  position: relative;
 }
 
 .asset-tile-button:hover {
@@ -225,6 +226,32 @@ body.grabbing #mapCanvas.brush-visible {
   height: 48px;
   image-rendering: pixelated;
   display: block;
+}
+
+.asset-tile-button.has-warning {
+  border-color: var(--warn);
+  box-shadow: 0 0 0 1px rgba(231, 76, 60, 0.6);
+}
+
+.asset-tile-button.has-warning:hover {
+  box-shadow: 0 0 0 2px rgba(231, 76, 60, 0.75);
+}
+
+.asset-anim-badge {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  background-color: rgba(77, 182, 172, 0.9);
+  color: #0b1f1d;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0 4px;
+  border-radius: 10px;
+  line-height: 16px;
+  min-width: 20px;
+  text-align: center;
+  pointer-events: none;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.35);
 }
 
 .asset-empty {

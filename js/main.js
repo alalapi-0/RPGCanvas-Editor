@@ -32,9 +32,9 @@
 
     window.RPG.Renderer.resizeToContainer(); // 同步一次 Canvas 尺寸以适配当前布局。
     window.RPG.Renderer.requestRender(); // 请求首次绘制以展示网格背景。
-    // TODO(R7): 动画帧循环 // 预留后续扩展动画驱动的注释。
+    // TODO(R8): 命中测试与属性提示 // 预留后续迭代需要完成的交互增强。
 
-    console.log('[RPGCanvas] R6 paint/erase + map render ready'); // 输出第六轮验收要求的核心功能就绪日志。
+    console.log('[RPGCanvas] R7 animation clock + A1 32→48 ready'); // 输出第七轮动画与缩放功能完成的日志。
 
     if (uiInitResult && uiInitResult.manifestReady) {
       // 当素材清单成功加载且面板就绪时输出验收日志。

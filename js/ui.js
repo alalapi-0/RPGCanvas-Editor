@@ -213,6 +213,8 @@
       this.assetPanel.grid = grid; // 缓存素材网格容器。
       this.assetPanel.buttons = []; // 重置按钮列表，等待渲染时填充。
       this.assetPanel.currentPack = null; // 当前选中的素材包名称初始化为空。
+      this.assetPanel.animRafId = null; // 记录面板动画循环的 requestAnimationFrame 句柄。
+      this.assetPanel.lastFrame = -1; // 记录上一帧用于检测是否需要重绘缩略图。
 
       packSelect.addEventListener('change', () => {
         // 监听素材包切换事件。
@@ -277,6 +279,12 @@
         // 若素材网格容器不存在则直接返回。
         return; // 等待结构修复后再渲染。
       }
+      if (this.assetPanel.animRafId !== null) {
+        // 当之前存在动画循环时先取消，避免重复帧请求。
+        window.cancelAnimationFrame(this.assetPanel.animRafId); // 取消旧的 requestAnimationFrame。
+        this.assetPanel.animRafId = null; // 重置句柄状态。
+      }
+      this.assetPanel.lastFrame = -1; // 重置上一帧记录，确保重新绘制缩略图。
       this.assetPanel.grid.innerHTML = ''; // 清空网格内容准备重新填充。
       this.assetPanel.buttons = []; // 清空按钮引用数组。
       const packs = this.assets.getPacks(); // 读取最新的素材包列表。
@@ -309,6 +317,8 @@
         this.assetPanel.buttons.push(button); // 记录按钮引用用于状态同步。
       });
       this.syncGridSelection(this.editor.getSelectedTileId()); // 根据当前画笔状态刷新选中样式。
+      this.paintAssetThumbnailsOnce(); // 初始渲染完成后立即绘制一次缩略图，确保显示最新帧。
+      this.ensureAssetPanelAnimation(true); // 启动面板动画循环以驱动动态缩略图。
     },
 
     createTileButton(tileDef) {
@@ -317,15 +327,122 @@
       button.type = 'button'; // 设置按钮类型为普通按钮。
       button.className = 'asset-tile-button'; // 应用素材按钮样式。
       button.title = tileDef.id; // 设置 title 属性悬浮显示素材 id。
-      const thumb = this.assets.makeTileThumb(tileDef); // 调用 Assets 生成 48×48 缩略图。
+      button.dataset.tileId = tileDef.id; // 将素材 id 写入 dataset 方便调试或测试。
+      button._tileDef = tileDef; // 将素材定义挂载到按钮实例上供缩略图刷新使用。
+      const thumb = this.assets.makeTileThumb(tileDef, 0); // 调用 Assets 生成 48×48 缩略图。
       thumb.width = 48; // 显式指定缩略图宽度，确保布局稳定。
       thumb.height = 48; // 显式指定缩略图高度。
+      thumb.classList.add('asset-thumb'); // 为缩略图添加类名以便样式控制。
+      thumb.dataset.tileId = tileDef.id; // 将素材 id 写入 canvas dataset 方便排查。
       button.appendChild(thumb); // 将缩略图 canvas 插入按钮。
+      if (Array.isArray(tileDef.validationWarnings) && tileDef.validationWarnings.length > 0) {
+        // 当素材在 manifest 校验阶段产生警告时，为按钮添加提示样式。
+        button.classList.add('has-warning'); // 添加 has-warning 类以便在样式层展示提醒。
+      }
+      if (tileDef.animated !== undefined) {
+        // 当素材定义包含动画帧时，额外渲染帧数徽标。
+        const badge = document.createElement('span'); // 创建徽标元素。
+        badge.className = 'asset-anim-badge'; // 应用徽标样式类。
+        badge.textContent = `${tileDef.animated}f`; // 使用“帧数+f”形式展示动画帧数量。
+        badge.setAttribute('aria-label', `${tileDef.animated} 帧动画`); // 提供辅助功能文本描述。
+        button.appendChild(badge); // 将徽标插入按钮右上角。
+      }
       button.addEventListener('click', () => {
         // 绑定点击事件以更新画笔选择。
         this.handleTileSelection(tileDef.id); // 调用内部方法设置当前画笔并刷新状态。
       });
       return button; // 返回构建完成的按钮元素。
+    },
+
+    paintAssetThumbnailsOnce() {
+      // 遍历当前素材按钮并使用全局动画帧刷新缩略图。
+      const assets = this.assets; // 缓存素材管理器引用。
+      const renderer = this.renderer; // 缓存渲染器引用以读取动画帧。
+      if (!assets || !renderer) {
+        // 若关键模块尚未就绪则无需绘制。
+        return; // 提前结束避免报错。
+      }
+      const frame = renderer.anim ? renderer.anim.frame : 0; // 读取当前全局动画帧索引。
+      this.assetPanel.buttons.forEach((button) => {
+        // 遍历每个素材按钮刷新对应缩略图。
+        const tileDef = button._tileDef; // 从按钮上读取素材定义。
+        if (!tileDef) {
+          // 若缺失素材定义则跳过。
+          return; // 继续下一个按钮。
+        }
+        const canvas = button.querySelector('canvas'); // 查询按钮中的缩略图画布。
+        if (!(canvas instanceof HTMLCanvasElement)) {
+          // 若未找到合法画布则跳过。
+          return; // 继续下一个按钮。
+        }
+        const ctx = canvas.getContext('2d'); // 获取缩略图 2D 上下文。
+        if (!ctx) {
+          // 若上下文获取失败则跳过。
+          return; // 继续下一个按钮。
+        }
+        const frameIndex = tileDef.animated !== undefined ? frame : 0; // 根据素材是否动画决定绘制帧。
+        assets.drawToCanvas(ctx, tileDef, 0, 0, 48, 48, frameIndex); // 调用共享绘制函数更新缩略图。
+      });
+      this.assetPanel.lastFrame = frame; // 记录本次绘制使用的帧索引。
+    },
+
+    ensureAssetPanelAnimation(forceStart = false) {
+      // 启动或维持素材面板缩略图动画循环。
+      if (!this.renderer || !this.assets) {
+        // 若核心模块尚未就绪则无需启动循环。
+        return; // 直接返回等待初始化完成。
+      }
+      const tick = (forced) => {
+        // 定义循环中每帧执行的回调。
+        const renderer = this.renderer; // 缓存渲染器引用。
+        const assets = this.assets; // 缓存素材管理器引用。
+        const frame = renderer.anim ? renderer.anim.frame : 0; // 读取当前全局动画帧索引。
+        let hasAnimated = false; // 标记当前面板是否包含动画素材。
+        this.assetPanel.buttons.forEach((button) => {
+          // 遍历每个素材按钮刷新缩略图。
+          const tileDef = button._tileDef; // 读取挂载的素材定义。
+          if (!tileDef) {
+            // 若缺失素材定义则跳过。
+            return; // 继续下一个按钮。
+          }
+          const canvas = button.querySelector('canvas'); // 获取缩略图画布。
+          if (!(canvas instanceof HTMLCanvasElement)) {
+            // 若找不到有效画布则跳过。
+            return; // 继续下一个按钮。
+          }
+          const ctx = canvas.getContext('2d'); // 获取绘图上下文。
+          if (!ctx) {
+            // 若无法获取上下文则跳过。
+            return; // 继续下一个按钮。
+          }
+          const frameIndex = tileDef.animated !== undefined ? frame : 0; // 确定要绘制的帧索引。
+          if (tileDef.animated !== undefined) {
+            // 当素材具有动画时标记需要持续循环。
+            hasAnimated = true; // 记录存在动画素材。
+          }
+          assets.drawToCanvas(ctx, tileDef, 0, 0, 48, 48, frameIndex); // 绘制当前帧缩略图。
+        });
+        this.assetPanel.lastFrame = frame; // 记录已绘制的帧索引。
+        if (hasAnimated) {
+          // 当面板包含动画素材时继续下一帧循环。
+          this.assetPanel.animRafId = window.requestAnimationFrame(() => tick(false)); // 请求下一帧继续动画。
+        } else if (forced) {
+          // 当强制刷新时额外再绘制一帧以确保资源加载完成。
+          this.assetPanel.animRafId = window.requestAnimationFrame(() => tick(false)); // 再执行一次后停止。
+        } else {
+          // 当不存在动画素材时终止循环释放资源。
+          this.assetPanel.animRafId = null; // 将句柄重置为 null 表示循环结束。
+        }
+      };
+      if (forceStart) {
+        // 当外部要求强制启动时，立即安排一次带强制标记的帧。
+        this.assetPanel.animRafId = window.requestAnimationFrame(() => tick(true)); // 启动循环并强制刷新一次。
+        return; // 结束方法避免重复安排。
+      }
+      if (this.assetPanel.animRafId === null) {
+        // 当当前没有运行中的循环时启动常规帧。
+        this.assetPanel.animRafId = window.requestAnimationFrame(() => tick(false)); // 启动动画循环。
+      }
     },
 
     handleTileSelection(tileId) {
@@ -367,7 +484,13 @@
         // 若画笔节点不存在则无需更新。
         return; // 直接结束方法。
       }
-      const display = tileId && typeof tileId === 'string' ? tileId : '-'; // 根据传入 id 决定显示文本。
+      let display = tileId && typeof tileId === 'string' ? tileId : '-'; // 根据传入 id 决定显示文本。
+      const tileDef = tileId ? this.assets.getTileById(tileId) : null; // 查询素材定义以判断是否动画。
+      if (tileDef && tileDef.animated !== undefined) {
+        // 当所选素材包含动画帧时追加动画信息。
+        const fps = this.renderer && this.renderer.anim ? this.renderer.anim.fps : 0; // 读取当前全局动画时钟的 FPS。
+        display += ` | 动画: ${tileDef.animated}帧@${fps}fps`; // 拼接动画帧数与播放速度提示。
+      }
       this.status.brush.textContent = `画笔: ${display}`; // 更新画笔状态文本。
     },
 
