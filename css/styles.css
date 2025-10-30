@@ -15,6 +15,7 @@
   --color-grid-light: rgba(255, 255, 255, 0.05);
   --color-grid-dark: rgba(0, 0, 0, 0.2);
   --color-brush: rgba(77, 182, 172, 0.75);
+  --warn: #e74c3c;
   --toolbar-height: 64px;
   --sidebar-width: 280px;
   --statusbar-height: 32px;
@@ -76,6 +77,28 @@ body.grabbing #mapCanvas.brush-visible {
 .btn-group {
   display: flex;
   gap: 12px;
+}
+
+.toolbar-layer-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+#layerSelect {
+  padding: 6px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  background-color: var(--color-bg-light);
+  color: var(--color-text);
+  font-size: 14px;
+}
+
+#layerSelect:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px rgba(77, 182, 172, 0.25);
 }
 
 .btn {
@@ -273,4 +296,10 @@ body.grabbing #mapCanvas {
 
 #statusbar span {
   white-space: nowrap;
+}
+
+#status-hint {
+  flex: 1;
+  color: var(--warn);
+  text-align: right;
 }

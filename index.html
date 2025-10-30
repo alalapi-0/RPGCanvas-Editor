@@ -19,6 +19,16 @@
       </div>
     </div>
     <div class="toolbar-section toolbar-right">
+      <div class="toolbar-layer-select">
+        <label for="layerSelect">图层</label>
+        <select id="layerSelect" aria-label="Select Layer">
+          <option value="ground">ground</option>
+          <option value="structure">structure</option>
+          <option value="prop">prop</option>
+          <option value="overlay">overlay</option>
+          <option value="decal">decal</option>
+        </select>
+      </div>
       <span class="toolbar-status" id="quick-status">准备就绪</span>
     </div>
   </header>
@@ -52,8 +62,11 @@
 
   <footer id="statusbar" role="contentinfo" aria-label="Status Bar">
     <span id="status-map">无地图</span>
-    <span id="status-zoom">缩放：100%</span>
-    <span id="status-pos">坐标：-</span>
+    <span id="status-layer">图层: ground</span>
+    <span id="status-brush">画笔: -</span>
+    <span id="status-zoom">缩放: 100%</span>
+    <span id="status-pos">格: -</span>
+    <span id="status-hint"></span>
   </footer>
 
   <script src="js/renderer.js"></script>

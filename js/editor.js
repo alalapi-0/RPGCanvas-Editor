@@ -15,6 +15,7 @@
       isPanning: false, // 是否处于画布平移状态，供 UI 模块读取。
       isSpaceHold: false, // 是否按住空格键，供 UI 模块决定平移模式。
       selectedTileId: null, // 当前画笔选中的素材 id，初始为空表示未选择。
+      mapDirty: false, // 当前地图数据是否发生未保存的改动，初始为未脏状态。
     },
 
     init() {
@@ -24,6 +25,7 @@
       this.state.isPanning = false; // 清空平移状态标记，避免历史状态影响交互。
       this.state.isSpaceHold = false; // 清空空格按压标记，确保键盘状态正确。
       this.state.selectedTileId = null; // 重置画笔素材选择，等待 UI 在加载 manifest 后设置。
+      this.state.mapDirty = false; // 初始化时将地图脏标记重置为 false。
       console.log('[Editor] init state', { activeLayer: this.state.activeLayer }); // 输出初始化日志便于调试。
     },
 
@@ -232,6 +234,7 @@
       const sanitizedMap = this._sanitizeLoadedMap(mapData); // 调用内部函数校验并规范化地图数据。
       this.state.currentMap = sanitizedMap; // 将规范化结果保存为当前地图引用。
       this.state.activeLayer = this.state.activeLayer || 'ground'; // 保持激活图层有效，若为空则重置为 ground。
+      this.state.mapDirty = false; // 切换地图后将脏标记重置，表示当前数据为最新状态。
       const event = new CustomEvent('rpg:map-changed', {
         // 创建自定义事件通知 UI 模块地图信息已变化。
         detail: {
@@ -293,6 +296,93 @@
       }
       map.layers[layerName][y][x] = null; // 将目标单元格重置为 null。
       map.meta.updatedAt = new Date().toISOString(); // 更新更新时间戳记录变更。
+    },
+
+    paintAt(gx, gy, brush) {
+      // 在当前激活图层的指定格坐标写入新的 TilePlacement。
+      const map = this.state.currentMap; // 读取当前地图引用以便后续校验。
+      if (!map) {
+        // 若尚未加载地图则无法进行绘制操作。
+        throw new Error('[Editor] paintAt requires loaded map'); // 抛出错误提示调用方先加载地图。
+      }
+      if (!Number.isInteger(gx) || !Number.isInteger(gy)) {
+        // 仅接受整数格坐标，确保与网格对齐。
+        throw new Error('[Editor] paintAt requires integer grid coordinates'); // 抛出错误提示坐标类型错误。
+      }
+      if (!brush || typeof brush !== 'object') {
+        // 画笔参数必须为对象，包含 tileId 与旋转等信息。
+        throw new Error('[Editor] paintAt requires brush object'); // 抛出错误提示 brush 无效。
+      }
+      if (typeof brush.tileId !== 'string' || !brush.tileId.trim()) {
+        // tileId 必须为非空字符串以匹配素材索引。
+        throw new Error('[Editor] paintAt requires brush.tileId string'); // 抛出错误提示 tileId 不合法。
+      }
+      if (gx < 0 || gx >= map.width || gy < 0 || gy >= map.height) {
+        // 若坐标越界则直接终止并提示错误。
+        throw new Error('[Editor] paintAt out of bounds'); // 抛出错误提示越界。
+      }
+      const assets = window.RPG?.Assets; // 读取全局素材管理器，获取 tile 定义。
+      if (!assets || typeof assets.getTileById !== 'function') {
+        // 当素材管理器尚未就绪时无法解析 tileId。
+        throw new Error('[Editor] paintAt requires Assets manager'); // 抛出错误提示调用顺序不正确。
+      }
+      const tileDef = assets.getTileById(brush.tileId); // 查询对应素材定义。
+      if (!tileDef) {
+        // 未能找到素材定义说明 manifest 数据缺失。
+        throw new Error(`[Editor] paintAt unknown tileId: ${brush.tileId}`); // 抛出错误提示 tileId 异常。
+      }
+      const activeLayer = this.getActiveLayer(); // 读取当前激活的图层名称。
+      if (tileDef.layer !== activeLayer) {
+        // 素材声明的图层必须与当前激活图层匹配。
+        throw new Error(`[Editor] paintAt layer mismatch: ${tileDef.layer} !== ${activeLayer}`); // 抛出错误提示图层不匹配。
+      }
+      const allowedRotations = [0, 90, 180, 270]; // 定义允许的旋转角度集合。
+      const rotation = allowedRotations.includes(brush.rotation) ? brush.rotation : 0; // 若传入角度非法则退化为 0 度。
+      const placement = {
+        tileId: brush.tileId.trim(), // 去除首尾空格后写入 tileId。
+        rotation, // 写入规范化后的旋转角度。
+        flipX: Boolean(brush.flipX), // 将 flipX 规范化为布尔值。
+        flipY: Boolean(brush.flipY), // 将 flipY 规范化为布尔值。
+        animOffset: 0, // 当前轮次始终写入 0，后续动画偏移在 R7 扩展。
+      }; // 组装 TilePlacement 对象以写入数据层。
+      const layerGrid = map.layers[activeLayer]; // 读取目标图层的二维数组。
+      const row = Array.isArray(layerGrid) ? layerGrid[gy] : null; // 获取当前行引用以安全读取已有数据。
+      const existing = row ? row[gx] : null; // 获取当前格已有的放置信息。
+      const isSame = existing && existing.tileId === placement.tileId && existing.rotation === placement.rotation && Boolean(existing.flipX) === placement.flipX && Boolean(existing.flipY) === placement.flipY; // 判断是否与现有数据完全一致。
+      if (isSame) {
+        // 当目标格内容与新数据完全一致时无需写入。
+        return false; // 返回 false 表示没有实际变更。
+      }
+      this.setTile(activeLayer, gx, gy, placement); // 调用通用接口写入图块数据并刷新更新时间。
+      this.state.mapDirty = true; // 标记地图数据已发生变动，便于后续保存提示。
+      return true; // 返回 true 表示有实际写入操作。
+    },
+
+    eraseAt(gx, gy) {
+      // 删除当前激活图层指定格的 TilePlacement。
+      const map = this.state.currentMap; // 读取当前地图引用。
+      if (!map) {
+        // 未加载地图时无法执行删除操作。
+        throw new Error('[Editor] eraseAt requires loaded map'); // 抛出错误提示调用前需加载地图。
+      }
+      if (!Number.isInteger(gx) || !Number.isInteger(gy)) {
+        // 删除操作同样要求整数坐标。
+        throw new Error('[Editor] eraseAt requires integer grid coordinates'); // 抛出错误提示坐标类型错误。
+      }
+      if (gx < 0 || gx >= map.width || gy < 0 || gy >= map.height) {
+        // 越界时直接返回错误以保持调用习惯与 paintAt 一致。
+        throw new Error('[Editor] eraseAt out of bounds'); // 抛出错误提示坐标超出范围。
+      }
+      const layerName = this.getActiveLayer(); // 读取当前激活图层。
+      const layerGrid = map.layers[layerName]; // 获取目标图层二维数组。
+      const row = Array.isArray(layerGrid) ? layerGrid[gy] : null; // 获取当前行的引用。
+      if (!row || !row[gx]) {
+        // 当该格本身为空时无需执行删除，直接返回。
+        return false; // 返回 false 表示数据未发生变化。
+      }
+      this.removeTile(layerName, gx, gy); // 调用通用接口将该格设置为 null 并更新时间。
+      this.state.mapDirty = true; // 标记地图已被修改。
+      return true; // 返回 true 表示删除操作生效。
     },
 
     setActiveLayer(layerName) {
