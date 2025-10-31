@@ -1,17 +1,45 @@
 {
   "tileSize": 48,
-  "version": "0.3.0",
+  "version": "0.2.0",
   "packs": [
     {
       "name": "Dungeon_A1",
-      "src": "tiles/Dungeon_A1.png",
-      "tiles": []
+      "src": "Dungeon_A1.png",
+      "tiles": [
+        { "id": "dgn.water", "rect": [0, 0, 48, 48], "layer": "ground", "animated": 3, "walkable": false },
+        { "id": "dgn.lava", "rect": [48, 0, 48, 48], "layer": "ground", "animated": 3, "walkable": false }
+      ]
     },
     {
       "name": "Dungeon_A2",
       "src": "Dungeon_A2.png",
       "tiles": [
-        { "id": "dgn.floor_rock", "rect": [0, 0, 48, 48], "layer": "ground", "walkable": true }
+        { "id": "dgn.floor_rock", "rect": [0, 0, 48, 48], "layer": "ground", "walkable": true },
+        { "id": "dgn.floor_ruin", "rect": [96, 0, 48, 48], "layer": "ground", "walkable": true }
+      ]
+    },
+    {
+      "name": "Dungeon_A4",
+      "src": "Dungeon_A4.png",
+      "tiles": [
+        { "id": "dgn.wall_stone", "rect": [0, 0, 48, 48], "layer": "structure", "blocks": true, "occluderTopPx": 16 }
+      ]
+    },
+    {
+      "name": "Dungeon_A5",
+      "src": "Dungeon_A5.png",
+      "tiles": [
+        { "id": "dgn.stairs_up", "rect": [0, 0, 48, 48], "layer": "prop", "walkable": true, "affordances": ["stairs_up"] },
+        { "id": "dgn.arrow_east", "rect": [48, 0, 48, 48], "layer": "decal", "walkable": true }
+      ]
+    },
+    {
+      "name": "Dungeon_B",
+      "src": "Dungeon_B.png",
+      "tiles": [
+        { "id": "dgn.bridge_h", "rect": [0, 0, 48, 48], "layer": "overlay", "walkable": true, "affordances": ["bridge"] },
+        { "id": "dgn.ladder", "rect": [48, 0, 48, 48], "layer": "prop", "walkable": true, "affordances": ["ladder"] },
+        { "id": "dgn.chest", "rect": [96, 0, 48, 48], "layer": "prop", "walkable": false, "affordances": ["container"] }
       ]
     }
   ]
