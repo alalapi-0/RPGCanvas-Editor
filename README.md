@@ -50,7 +50,17 @@ RPGCanvas Editor 是一个基于原生 HTML5 Canvas 的 RPG Maker 风格 2D 地�
 - **警告与兜底**：manifest 若将 A1 动画 `rect` 指向非 f=0 帧带或未对齐 32 像素，会在控制台输出 `[Assets] animated tile rect not in f=0 strip` 警告，并在缩略图加红框提示；图像缺失或越界时统一渲染红底黑叉。
 - **当前局限**：本轮仅实现动画播放，AutoTile 邻接规则暂未启用，计划在 R9 中补全自动换形逻辑。
 
-## R8 新增说明：A1 16 掩码自动边角（简化版）
+## R8 新增说明：A1 切片（Dungeon_A1）极简版
+- **一键切片**：`assets/tiles/Dungeon_A1.png` 为 512×384 像素，按 4×4 组槽拆分为 16 个 128×96 区域；每个区域再细分为 4 列 × 3 行的
+  32×32 小格，仅导出最右两列，共 6 个静态格，最终生成 16×6=96 条素材条目。
+- **名称映射**：`assets/tiles/Dungeon_A1.txt` 按行给出 `English|日本語`，默认行序映射到 slot 1..16；可选的 `assets/tiles/Dungeon_A1.map.json`
+  允许通过 `order` 数组重排名称→组槽关系，若文件存在会在启动日志输出 `[RPGCanvas] Dungeon_A1 order: …`。
+- **运行方式**：直接打开 `index.html` 即可，控制台会输出 `[RPGCanvas] Dungeon_A1 loaded: 16 groups / 96 tiles` 表示切片成功；素材侧栏的
+  `Dungeon_A1` 包展示 16 张组卡与 6 个静态格缩略图，并在底部统计 `Dungeon_A1: 16 groups / 96 tiles`。
+- **本轮范围**：仅完成静态格登记与三帧滑窗元数据提示（徽标 `3f`）；不渲染动画、不启用自动边角，调试面板仅提供“显示 A1 组槽网格”
+  的辅助开关。
+
+## 展望：A1 16 掩码自动边角（简化版）
 - **四向掩码**：以同一 A1 大组（64×96 像素区块）为判定条件，检查北/东/南/西四个方向的相邻格是否与当前格同组，将结果写入位掩码 `mask = (N?1:0)|(E?2:0)|(S?4:0)|(W?8:0)`。越界或非同组地形视为 0。
 - **象限拼接**：每个 48×48 单元被拆分为 `NW/NE/SE/SW` 四个 16×16 象限，根据掩码查表决定填充 (`FILL`)、边 (`EDGE_*`) 或外角 (`CORNER_OUT_*`) 角色，再通过旋转复用 A1 帧内的 32×32 子片。
 - **查表驱动**：`js/autotile16.js` 将 0..15 的掩码写成常量 `TABLE`，便于开发期直接覆写或调试；`resolveMask()` 会返回深拷贝的象限描述 `{ role, rot }`，渲染器依此调用 `composeTileQuad()`。
