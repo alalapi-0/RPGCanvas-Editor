@@ -109,14 +109,17 @@
       }
       this.manifest = data; // 保存原始 manifest 数据供调试。
       this.packs = normalizedPacks; // 写入规范化素材包数组供外部访问。
+      normalizedPacks.forEach((pack) => {
+        this.packs[pack.name] = pack; // 允许通过 packs['包名'] 快速索引素材包。
+      });
       return true; // 返回 true 表示加载成功。
     },
 
     async _augmentDungeonA1Pack(normalizedPack, packIndex) {
       // 内部辅助：调用切片器生成 Dungeon_A1 的 16 组 96 格。
-      const slicer = window.RPG?.A1DungeonSlicer; // 读取切片器引用。
+      const slicer = window.RPG?.SliceA1Dungeon; // 读取新版切片器引用。
       if (!slicer || typeof slicer.slice !== 'function') {
-        console.warn('[Assets] A1DungeonSlicer 不可用，跳过 Dungeon_A1 自动切片'); // 输出警告提醒缺少依赖。
+        console.warn('[Assets] SliceA1Dungeon 不可用，跳过 Dungeon_A1 自动切片'); // 输出警告提醒缺少依赖。
         return;
       }
       let image = null;
@@ -172,6 +175,7 @@
         order: Array.isArray(sliceResult.order) ? sliceResult.order.slice() : [],
         groups,
         flatTiles: sliceResult.flatTiles.length,
+        hasMap: Boolean(sliceResult.hasMap),
       }; // 汇总元数据供调试与 UI 使用。
       if (!normalizedPack.meta || typeof normalizedPack.meta !== 'object') {
         normalizedPack.meta = {}; // 若原先不存在元数据对象则创建空对象。
@@ -182,8 +186,9 @@
         names: info.names,
         order: info.order,
         groups,
+        hasMap: info.hasMap,
       }; // 保存全局引用方便 Debug 面板使用。
-      console.log(`[RPGCanvas] Dungeon_A1 slicer: ${groups.length} groups / ${sliceResult.flatTiles.length} tiles ready`);
+      console.log(`[RPGCanvas] Dungeon_A1 loaded: ${groups.length} groups / ${sliceResult.flatTiles.length} tiles`); // 输出验收要求的统计日志。
     },
 
     _normalizeTile(tile, normalizedPack, packIndex, tileIndexInPack) {
@@ -352,6 +357,7 @@
         names: this.dungeonA1.names.map((entry) => ({ ...entry })), // 复制名称数组防止外部修改。
         order: Array.isArray(this.dungeonA1.order) ? [...this.dungeonA1.order] : [],
         groups: this.dungeonA1.groups, // 组对象本身可供 UI 直接读取。
+        hasMap: Boolean(this.dungeonA1.hasMap), // 暴露是否加载了 map.json。
       };
     },
 

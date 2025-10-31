@@ -219,7 +219,7 @@
       gridToggle.type = 'checkbox';
       gridToggle.id = 'dungeonA1GridToggle';
       const gridToggleText = document.createElement('span');
-      gridToggleText.textContent = '显示 4×4 切片网格';
+      gridToggleText.textContent = '显示 A1 组槽网格'; // 设置复选框文本描述符合验收要求。
       gridToggleLabel.appendChild(gridToggle);
       gridToggleLabel.appendChild(gridToggleText);
 
@@ -249,7 +249,7 @@
 
       const statsLine = document.createElement('div');
       statsLine.className = 'debug-stats';
-      statsLine.textContent = '统计：-';
+      statsLine.textContent = 'Dungeon_A1: -'; // 初始化统计占位文本。
 
       const reorderButton = document.createElement('button');
       reorderButton.type = 'button';
@@ -523,12 +523,12 @@
       }
       const meta = this.assets.getDungeonA1Meta(); // 读取切片元数据。
       if (!meta || !Array.isArray(meta.groups)) {
-        this.dungeonA1Debug.stats.textContent = '统计：-'; // 当数据缺失时显示占位。
+        this.dungeonA1Debug.stats.textContent = 'Dungeon_A1: -'; // 当数据缺失时显示占位。
         return;
       }
       const groupCount = meta.groups.length; // 计算组数量。
       const tileCount = meta.groups.reduce((sum, group) => sum + (Array.isArray(group.tiles) ? group.tiles.length : 0), 0); // 汇总 tile 总数。
-      this.dungeonA1Debug.stats.textContent = `统计：${groupCount} 组 / ${tileCount} 片`; // 更新统计文本。
+      this.dungeonA1Debug.stats.textContent = `Dungeon_A1: ${groupCount} groups / ${tileCount} tiles`; // 更新统计文本符合需求格式。
     },
 
     syncDungeonA1DebugControls() {
