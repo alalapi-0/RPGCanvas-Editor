@@ -23,6 +23,7 @@
     assetsWarned: false, // 标记素材管理器缺失警告是否已经输出。
     anim: { fps: 6, frame: 0, elapsed: 0, running: true, maxFrame: 3 }, // 定义全局动画时钟状态。
     debug: { dungeonA1: { showSlotGrid: false, frameOverride: null } }, // 记录调试面板的可视化开关与帧覆盖值。
+    features: { autoTile16: false }, // 定义特性开关集合，本轮默认关闭 AutoTile16 以符合“不启用自动边角”的要求。
     lastTimestamp: null, // 记录上一帧的时间戳用于计算 dt。
 
     init(canvasElement) {
@@ -346,6 +347,10 @@
 
     shouldUseAutoTile16(tileDef) {
       // 判断指定素材是否应该使用 16 掩码自动拼角流程。
+      if (!this.features || !this.features.autoTile16) {
+        // 当特性开关未启用时直接返回 false，保证第 8 轮不触发自动边角逻辑。
+        return false; // 遵循验收要求仅做静态绘制。
+      }
       if (!tileDef || typeof tileDef !== 'object') {
         // 若素材定义缺失则不启用自动拼角。
         return false; // 返回 false 表示保持常规绘制。
