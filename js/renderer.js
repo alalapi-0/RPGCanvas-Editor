@@ -512,11 +512,12 @@
         // 若素材管理器尚未初始化则无法绘制。
         return; // 等待下次渲染。
       }
+      const defaultFrameIndex = Number.isInteger(tileDef.animated) && tileDef.animated > 1 ? this.anim.frame : 0;
       const options = {
         // 合并默认选项与调用方参数。
         rotation: 0, // 默认不旋转。
         alpha: 1, // 默认完全不透明。
-        frameIndex: tileDef.animated !== undefined ? this.anim.frame : 0, // 默认使用当前全局动画帧。
+        frameIndex: defaultFrameIndex, // 根据素材帧数确定默认动画帧。
         flipX: false, // 默认不翻转。
         flipY: false, // 默认不翻转。
         ...opts, // 合并调用方提供的覆盖值。

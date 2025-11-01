@@ -12,6 +12,7 @@
     // 定义 Assets 单例对象，集中管理 manifest 数据与图集缓存。
     manifest: null, // 保存原始 manifest JSON 数据，便于调试与后续功能引用。
     packs: [], // 存储规范化后的素材包数组，每个元素包含 name、src 与 tiles。
+    gridSize: 48, // 记录网格目标尺寸，默认 48px。
     tileIndex: new Map(), // 建立 tileId 到 tile 定义的映射，支持快速查询。
     images: new Map(), // 缓存图集图片对象，键为 src，值为 HTMLImageElement。
 
@@ -19,6 +20,7 @@
       // 异步加载并解析 manifest 文件，默认路径指向 assets/manifest.json。
       this.manifest = null; // 重置 manifest 引用，确保重新加载时不会残留旧数据。
       this.packs = []; // 清空已解析的包数组，为新数据做准备。
+      this.gridSize = 48; // 重置全局网格尺寸到默认值。
       this.tileIndex.clear(); // 清空 tile 索引，避免旧条目污染新结果。
       if (typeof url !== 'string' || !url.trim()) {
         // 若传入的 URL 不是非空字符串，则直接抛出错误提示调用方。
@@ -42,6 +44,7 @@
         // packs 字段必须为数组，记录素材包列表。
         throw new Error('[Assets] manifest.packs must be array'); // 若不是数组则抛出错误。
       }
+      this.gridSize = data.tileSize; // 记录全局网格尺寸供缩略图与渲染器查询。
       const normalizedPacks = []; // 创建临时数组存放规范化后的包数据。
       data.packs.forEach((pack, packIndex) => {
         // 遍历每个素材包条目并进行校验。
@@ -62,83 +65,28 @@
           throw new Error(`[Assets] pack.tiles must be array at index ${packIndex}`); // 抛出错误提示结构异常。
         }
         const normalizedPack = {
-          name: pack.name.trim(), // 规范化包名称，去除首尾空格。
-          src: pack.src.trim(), // 规范化图集路径字符串。
-          tiles: [], // 预先创建 tiles 数组以填充规范化后的 tile 定义。
-        }; // 构造规范化素材包对象。
+          name: pack.name.trim(),
+          src: pack.src.trim(),
+          tiles: [],
+          tileSize: Number.isInteger(pack.tileSize) ? pack.tileSize : data.tileSize,
+        };
         pack.tiles.forEach((tile, tileIndexInPack) => {
-          // 遍历素材包中的每个 tile 进行校验与规范化。
-          if (!tile || typeof tile !== 'object') {
-            // 每个 tile 必须是对象。
-            throw new Error(`[Assets] tile invalid at ${pack.name} index ${tileIndexInPack}`); // 抛出错误指出问题位置。
-          }
-          if (typeof tile.id !== 'string' || !tile.id.trim()) {
-            // tile.id 需为非空字符串，用于唯一标识素材。
-            throw new Error(`[Assets] tile.id invalid at ${pack.name} index ${tileIndexInPack}`); // 抛出错误提示 id 非法。
-          }
-          const rect = tile.rect; // 读取 rect 字段用于校验与规范化。
-          if (!Array.isArray(rect) || rect.length !== 4) {
-            // rect 必须是长度为 4 的数组 [x, y, w, h]。
-            throw new Error(`[Assets] tile.rect invalid at ${tile.id}`); // 抛出错误说明 rect 结构错误。
-          }
-          const [x, y, w, h] = rect; // 解构四个坐标值。
-          if (!Number.isInteger(x) || !Number.isInteger(y) || !Number.isInteger(w) || !Number.isInteger(h)) {
-            // rect 中的每个值都必须是整数。
-            throw new Error(`[Assets] tile.rect must contain integers at ${tile.id}`); // 抛出错误提示类型错误。
-          }
-          if (w !== 48 || h !== 48) {
-            // 每个 tile 的宽高必须与 tileSize 一致。
-            throw new Error(`[Assets] tile.rect size must be 48 for ${tile.id}`); // 抛出错误提示尺寸不匹配。
-          }
-          if (typeof tile.layer !== 'string' || !ALLOWED_LAYERS.includes(tile.layer)) {
-            // layer 字段必须为允许列表中的字符串。
-            throw new Error(`[Assets] tile.layer invalid at ${tile.id}`); // 抛出错误提示图层非法。
-          }
-          let animated = tile.animated === undefined ? 1 : tile.animated; // 若未提供 animated 则默认 1 帧。
-          if (!Number.isInteger(animated) || animated < 1) {
-            // animated 必须是大于等于 1 的整数。
-            throw new Error(`[Assets] tile.animated invalid at ${tile.id}`); // 抛出错误提示动画帧数非法。
-          }
-          let occluderTopPx = tile.occluderTopPx; // 读取可选的遮挡高度字段。
-          if (occluderTopPx !== undefined) {
-            // 若提供该字段则进行类型校验。
-            if (!Number.isInteger(occluderTopPx) || occluderTopPx < 0) {
-              // 遮挡高度需为非负整数。
-              throw new Error(`[Assets] tile.occluderTopPx invalid at ${tile.id}`); // 抛出错误提示参数非法。
+          try {
+            const normalizedTile = this._normalizeTileDefinition(tile, normalizedPack, { strictSize: true });
+            if (this.tileIndex.has(normalizedTile.id)) {
+              throw new Error(`[Assets] duplicated tile id: ${normalizedTile.id}`);
             }
+            this.tileIndex.set(normalizedTile.id, normalizedTile);
+            normalizedPack.tiles.push(normalizedTile);
+          } catch (error) {
+            throw new Error(`[Assets] tile invalid at ${pack.name} index ${tileIndexInPack}: ${error.message}`);
           }
-          let affordances = undefined; // 准备处理可选的 affordances 字段。
-          if (tile.affordances !== undefined) {
-            // 若提供 affordances 列表则执行校验。
-            if (!Array.isArray(tile.affordances) || !tile.affordances.every((entry) => typeof entry === 'string')) {
-              // 列表必须全为字符串。
-              throw new Error(`[Assets] tile.affordances invalid at ${tile.id}`); // 抛出错误提示结构非法。
-            }
-            affordances = [...tile.affordances]; // 使用浅拷贝保存字符串数组。
-          }
-          const normalizedTile = {
-            id: tile.id.trim(), // 去除首尾空格后的素材唯一标识。
-            rect: { x, y, width: w, height: h }, // 将 rect 转换为具名属性的对象形式，便于后续使用。
-            layer: tile.layer, // 保留合法的图层名称。
-            animated, // 保存动画帧数，静态素材为 1。
-            walkable: tile.walkable === undefined ? undefined : Boolean(tile.walkable), // 规范 walkable 字段为布尔或 undefined。
-            blocks: tile.blocks === undefined ? undefined : Boolean(tile.blocks), // 规范 blocks 字段为布尔或 undefined。
-            affordances, // 存储可选的 affordances 列表或 undefined。
-            occluderTopPx, // 存储可选的遮挡高度，未提供则为 undefined。
-            pack: normalizedPack.name, // 记录所属素材包名称，便于 UI 反查。
-            src: normalizedPack.src, // 记录素材所属图集路径。
-          }; // 构建规范化后的 tile 定义对象。
-          if (this.tileIndex.has(normalizedTile.id)) {
-            // 若 tileIndex 中已存在同名条目则说明出现重复 id。
-            throw new Error(`[Assets] duplicated tile id: ${normalizedTile.id}`); // 抛出错误阻止加载继续。
-          }
-          this.tileIndex.set(normalizedTile.id, normalizedTile); // 将规范化 tile 写入索引表。
-          normalizedPack.tiles.push(normalizedTile); // 将 tile 添加到当前素材包的 tiles 列表。
         });
         normalizedPacks.push(normalizedPack); // 将处理完成的包写入临时数组。
       });
       this.manifest = data; // 保存原始 manifest 数据供调试与导出使用。
       this.packs = normalizedPacks; // 将规范化素材包数组写入实例属性。
+      await this.injectDungeonA1(); // 注入 Dungeon_A1 的运行期切片数据。
       return true; // 返回 true 表示加载与校验顺利完成。
     },
 
@@ -154,6 +102,11 @@
         return undefined; // 直接返回 undefined 表示未找到或输入非法。
       }
       return this.tileIndex.get(id.trim()); // 从 Map 中获取对应的 tile 定义对象。
+    },
+
+    getGridSize() {
+      // 返回当前全局网格尺寸（默认为 48px，允许运行时覆盖）。
+      return this.gridSize || 48;
     },
 
     async getImageFor(src) {
@@ -215,9 +168,238 @@
       return loadPromise; // 返回等待加载完成的 Promise。
     },
 
+    _cloneMeta(meta) {
+      // 对 meta 字段执行浅拷贝，确保运行时修改不会污染原始数据。
+      if (!meta || typeof meta !== 'object') {
+        return undefined;
+      }
+      if (Array.isArray(meta)) {
+        return meta.map((entry) => (typeof entry === 'object' ? this._cloneMeta(entry) : entry));
+      }
+      const clone = { ...meta };
+      Object.keys(clone).forEach((key) => {
+        const value = clone[key];
+        if (Array.isArray(value)) {
+          clone[key] = value.map((entry) => (typeof entry === 'object' ? this._cloneMeta(entry) : entry));
+        } else if (value && typeof value === 'object') {
+          clone[key] = this._cloneMeta(value);
+        }
+      });
+      return clone;
+    },
+
+    _normalizeTileDefinition(tile, packContext, options = {}) {
+      // 将原始 tile 定义转换成运行期结构，并应用尺寸与字段校验。
+      if (!tile || typeof tile !== 'object') {
+        throw new Error('tile definition must be object');
+      }
+      const context = packContext || {};
+      const strictSize = options.strictSize !== undefined ? options.strictSize : true;
+      const allowZeroAnimated = Boolean(options.allowZeroAnimated);
+      const packTileSize = Number.isInteger(context.tileSize) ? context.tileSize : this.getGridSize();
+      const id = typeof tile.id === 'string' ? tile.id.trim() : '';
+      if (!id) {
+        throw new Error('tile.id invalid');
+      }
+      const rectSource = tile.rect;
+      let x;
+      let y;
+      let w;
+      let h;
+      if (Array.isArray(rectSource) && rectSource.length === 4) {
+        [x, y, w, h] = rectSource;
+      } else if (rectSource && typeof rectSource === 'object') {
+        x = rectSource.x;
+        y = rectSource.y;
+        w = rectSource.width;
+        h = rectSource.height;
+      } else {
+        throw new Error('tile.rect invalid');
+      }
+      if (!Number.isInteger(x) || !Number.isInteger(y) || !Number.isInteger(w) || !Number.isInteger(h)) {
+        throw new Error('tile.rect must contain integers');
+      }
+      if (strictSize && (w !== packTileSize || h !== packTileSize)) {
+        throw new Error(`tile.rect size must be ${packTileSize}`);
+      }
+      const layer = typeof tile.layer === 'string' ? tile.layer.trim() : '';
+      if (!ALLOWED_LAYERS.includes(layer)) {
+        throw new Error('tile.layer invalid');
+      }
+      let animated = tile.animated === undefined ? 1 : tile.animated;
+      if (!Number.isInteger(animated) || animated < 0) {
+        throw new Error('tile.animated invalid');
+      }
+      if (animated === 0 && !allowZeroAnimated) {
+        animated = 1; // 当不允许 0 帧时回退到静态 1 帧。
+      }
+      let occluderTopPx = tile.occluderTopPx;
+      if (occluderTopPx !== undefined) {
+        if (!Number.isInteger(occluderTopPx) || occluderTopPx < 0) {
+          throw new Error('tile.occluderTopPx invalid');
+        }
+      }
+      let affordances = undefined;
+      if (tile.affordances !== undefined) {
+        if (!Array.isArray(tile.affordances) || !tile.affordances.every((entry) => typeof entry === 'string')) {
+          throw new Error('tile.affordances invalid');
+        }
+        affordances = [...tile.affordances];
+      }
+      const normalizedTile = {
+        id,
+        rect: { x, y, width: w, height: h },
+        layer,
+        animated,
+        pack: context.name || '',
+        src: context.src || '',
+        packTileSize,
+      };
+      if (tile.walkable !== undefined) {
+        normalizedTile.walkable = Boolean(tile.walkable);
+      }
+      if (tile.blocks !== undefined) {
+        normalizedTile.blocks = Boolean(tile.blocks);
+      }
+      if (affordances) {
+        normalizedTile.affordances = affordances;
+      }
+      if (occluderTopPx !== undefined) {
+        normalizedTile.occluderTopPx = occluderTopPx;
+      }
+      if (Array.isArray(tile.animWindowCols)) {
+        normalizedTile.animWindowCols = [...tile.animWindowCols];
+      }
+      if (tile.animPairW !== undefined) {
+        normalizedTile.animPairW = tile.animPairW;
+      }
+      const meta = this._cloneMeta(tile.meta);
+      if (meta) {
+        normalizedTile.meta = meta;
+      }
+      return normalizedTile;
+    },
+
+    async injectDungeonA1() {
+      // 调用 Dungeon_A1 切片器，将 96 个静态格注入素材清单。
+      const slicer = window.RPG?.SliceA1Dungeon;
+      if (!slicer || typeof slicer.slice !== 'function') {
+        return;
+      }
+      try {
+        const result = await slicer.slice();
+        if (!result || !Array.isArray(result.flatTiles) || result.flatTiles.length === 0) {
+          return;
+        }
+        const packName = slicer.PACK_NAME || 'Dungeon_A1';
+        let targetPack = this.packs.find((pack) => pack.name === packName);
+        if (!targetPack) {
+          targetPack = { name: packName, src: 'Dungeon_A1.png', tiles: [] };
+          this.packs.push(targetPack);
+        }
+        targetPack.src = typeof targetPack.src === 'string' && targetPack.src.trim() ? targetPack.src.trim() : 'Dungeon_A1.png';
+        targetPack.tileSize = 32;
+        targetPack.runtimeMeta = {
+          names: Array.isArray(result.names) ? [...result.names] : null,
+          order: Array.isArray(result.order) ? [...result.order] : null,
+        };
+        targetPack.groups = Array.isArray(result.groups)
+          ? result.groups.map((group) => {
+              if (!group || typeof group !== 'object') {
+                return group;
+              }
+              const cloned = { ...group };
+              if (Array.isArray(group.slotRect)) {
+                cloned.slotRect = [...group.slotRect];
+              }
+              if (Array.isArray(group.tiles)) {
+                cloned.tiles = group.tiles.map((tile) => ({ ...tile }));
+              }
+              return cloned;
+            })
+          : undefined;
+        if (!Array.isArray(targetPack.tiles)) {
+          targetPack.tiles = [];
+        }
+        targetPack.tiles.forEach((tile) => {
+          if (tile && tile.id) {
+            this.tileIndex.delete(tile.id);
+          }
+        });
+        targetPack.tiles = [];
+        const context = { name: targetPack.name, src: targetPack.src, tileSize: targetPack.tileSize };
+        result.flatTiles.forEach((tile) => {
+          try {
+            const normalized = this._normalizeTileDefinition(tile, context, {
+              strictSize: true,
+              allowZeroAnimated: true,
+            });
+            this.tileIndex.set(normalized.id, normalized);
+            targetPack.tiles.push(normalized);
+          } catch (error) {
+            console.warn('[Assets] Dungeon_A1 tile skipped', tile?.id, error);
+          }
+        });
+      } catch (error) {
+        console.warn('[Assets] Dungeon_A1 注入失败', error);
+      }
+    },
+
+    drawToCanvas(ctx, tileDef, dx, dy, targetWidth, targetHeight, frameIndex = 0) {
+      // 将指定素材绘制到 Canvas 上，支持自定义目标尺寸与动画帧索引。
+      if (!(ctx instanceof CanvasRenderingContext2D)) {
+        return false;
+      }
+      if (!tileDef || typeof tileDef !== 'object') {
+        return false;
+      }
+      const imageKey = typeof tileDef.src === 'string' ? tileDef.src : '';
+      if (!imageKey) {
+        return false;
+      }
+      const destWidth = Number.isFinite(targetWidth) ? targetWidth : this.getGridSize();
+      const destHeight = Number.isFinite(targetHeight) ? targetHeight : this.getGridSize();
+      const destX = Number.isFinite(dx) ? dx : 0;
+      const destY = Number.isFinite(dy) ? dy : 0;
+      const renderFrame = (image) => {
+        if (!(image instanceof HTMLImageElement) || !image.complete || image.naturalWidth === 0) {
+          return false;
+        }
+        const rect = tileDef.rect;
+        if (!rect || typeof rect.x !== 'number' || typeof rect.y !== 'number' || typeof rect.width !== 'number' || typeof rect.height !== 'number') {
+          return false;
+        }
+        const frameCount = Number.isInteger(tileDef.animated) && tileDef.animated > 1 ? tileDef.animated : 1;
+        const safeFrame = frameCount > 0 ? ((frameIndex % frameCount) + frameCount) % frameCount : 0;
+        const sx = rect.x + rect.width * safeFrame;
+        const sy = rect.y;
+        if (sx + rect.width > image.naturalWidth || sy + rect.height > image.naturalHeight) {
+          console.warn('[Assets] tile rect out of bounds', tileDef.id);
+          return false;
+        }
+        ctx.drawImage(image, sx, sy, rect.width, rect.height, destX, destY, destWidth, destHeight);
+        return true;
+      };
+      const cachedImage = this.images.get(imageKey);
+      if (cachedImage instanceof HTMLImageElement && cachedImage.complete && cachedImage.naturalWidth > 0) {
+        return renderFrame(cachedImage);
+      }
+      this.getImageFor(imageKey)
+        .then(() => {
+          const renderer = window.RPG?.Renderer;
+          if (renderer && typeof renderer.requestRender === 'function') {
+            renderer.requestRender();
+          }
+        })
+        .catch((error) => {
+          console.warn('[Assets] drawToCanvas image load failed', imageKey, error);
+        });
+      return false;
+    },
+
     makeTileThumb(tileDef) {
       // 根据 tile 定义生成 48×48 的缩略图 Canvas 并返回。
-      const tileSize = this.manifest ? this.manifest.tileSize : 48; // 读取 manifest 中的 tileSize，默认退回 48。
+      const tileSize = this.getGridSize(); // 缩略图目标尺寸与网格一致，保证 32→48 缩放一致性。
       const canvas = document.createElement('canvas'); // 创建离屏 Canvas 元素用于绘制缩略图。
       canvas.width = tileSize; // 将画布宽度设为 tileSize，符合项目固定尺寸。
       canvas.height = tileSize; // 将画布高度设为 tileSize。
@@ -250,21 +432,15 @@
 
       this.getImageFor(tileDef.src)
         .then((image) => {
-          // 图片加载成功后执行的回调。
-          const rect = tileDef.rect || { x: 0, y: 0, width: tileSize, height: tileSize }; // 获取图块的矩形区域。
-          const frameWidth = rect.width; // 读取帧宽度用于后续绘制。
-          const frameHeight = rect.height; // 读取帧高度用于后续绘制。
-          const frameIndex = 0; // 缩略图仅展示第 0 帧，后续迭代将扩展动画预览。
-          const sx = rect.x + frameWidth * frameIndex; // 计算源图像 X 坐标。
-          const sy = rect.y; // 源图像 Y 坐标即 rect.y。
-          if (sx + frameWidth > image.naturalWidth || sy + frameHeight > image.naturalHeight) {
-            // 当指定区域超出图集范围时执行兜底绘制。
-            console.warn(`[Assets] tile rect out of bounds for ${tileDef.id}`); // 输出警告提示越界信息。
-            drawFallback(); // 绘制兜底图案提示问题。
-            return; // 结束回调避免继续绘制。
+          if (!(image instanceof HTMLImageElement) || image.naturalWidth === 0) {
+            drawFallback();
+            return;
           }
-          ctx.clearRect(0, 0, tileSize, tileSize); // 清空画布以防残留。
-          ctx.drawImage(image, sx, sy, frameWidth, frameHeight, 0, 0, tileSize, tileSize); // 将首帧区域绘制到缩略图。
+          ctx.clearRect(0, 0, tileSize, tileSize);
+          const drawn = this.drawToCanvas(ctx, tileDef, 0, 0, tileSize, tileSize, 0);
+          if (!drawn) {
+            drawFallback();
+          }
         })
         .catch((error) => {
           // 图片加载失败时执行的回调。
