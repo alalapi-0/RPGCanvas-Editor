@@ -13,7 +13,7 @@
     editor: null, // 缓存编辑器实例引用，读取状态与数据层 API。
     assets: null, // 缓存 Assets 管理器引用，统一访问 manifest 与缩略图功能。
     status: { map: null, layer: null, brush: null, zoom: null, pos: null, hint: null }, // 存储状态栏各个文本节点引用。
-    assetPanel: { select: null, search: null, grid: null, errorBanner: null, buttons: [], currentPack: null, ready: false }, // 管理素材面板内部节点与状态。
+    assetPanel: { select: null, search: null, grid: null, packMeta: null, errorBanner: null, buttons: [], currentPack: null, ready: false }, // 管理素材面板内部节点与状态。
     panOrigin: { x: 0, y: 0 }, // 记录开始平移时的屏幕坐标，用于计算位移。
     brushRotation: 0, // 记录当前画笔预览的旋转角度，配合状态栏显示。
     editState: { painting: false, erasing: false, lastGX: null, lastGY: null }, // 记录当前鼠标绘制/擦除的拖拽状态。
@@ -200,17 +200,23 @@
       searchGroup.appendChild(searchLabel); // 插入标签。
       searchGroup.appendChild(searchInput); // 插入输入框。
 
+      const packMeta = document.createElement('div'); // 创建用于显示素材包元信息的提示条。
+      packMeta.className = 'asset-pack-meta'; // 应用提示样式。
+      packMeta.hidden = true; // 默认隐藏，仅在需要提示时显示。
+
       const grid = document.createElement('div'); // 创建素材缩略图网格容器。
       grid.className = 'asset-grid'; // 应用定义好的网格样式。
       grid.setAttribute('aria-label', 'Asset Thumbnails'); // 添加辅助功能标签方便朗读器。
 
       panelBody.appendChild(packGroup); // 将下拉框表单分组插入面板。
       panelBody.appendChild(searchGroup); // 将搜索表单分组插入面板。
+      panelBody.appendChild(packMeta); // 插入素材包元信息提示条。
       panelBody.appendChild(grid); // 将素材网格插入面板底部。
 
       this.assetPanel.select = packSelect; // 缓存下拉框引用供后续使用。
       this.assetPanel.search = searchInput; // 缓存搜索输入框引用。
       this.assetPanel.grid = grid; // 缓存素材网格容器。
+      this.assetPanel.packMeta = packMeta; // 缓存提示条引用以便更新显示。
       this.assetPanel.buttons = []; // 重置按钮列表，等待渲染时填充。
       this.assetPanel.currentPack = null; // 当前选中的素材包名称初始化为空。
 
@@ -264,6 +270,29 @@
       });
     },
 
+    updatePackMeta(pack) {
+      // 根据当前素材包的 tileSize 配置更新提示条显示。
+      const banner = this.assetPanel.packMeta;
+      if (!banner) {
+        return;
+      }
+      if (!pack) {
+        banner.hidden = true;
+        banner.textContent = '';
+        return;
+      }
+      const gridSize = this.assets.getGridSize();
+      const packSize = Number.isInteger(pack.tileSize) ? pack.tileSize : gridSize;
+      if (packSize !== gridSize) {
+        const packName = pack.name || 'Pack';
+        banner.textContent = `${packName}: 使用 ${packSize}px 图块（自动缩放至 ${gridSize}px 网格）`;
+        banner.hidden = false;
+      } else {
+        banner.hidden = true;
+        banner.textContent = '';
+      }
+    },
+
     handlePackChange() {
       // 在用户切换素材包时更新当前状态并重新渲染网格。
       const selected = this.assetPanel.select.value; // 读取下拉框当前选中值。
@@ -282,11 +311,13 @@
       const packs = this.assets.getPacks(); // 读取最新的素材包列表。
       const pack = packs.find((item) => item.name === this.assetPanel.currentPack); // 查找当前选择的素材包。
       if (!pack) {
+        this.updatePackMeta(null);
         // 当当前选择不存在时显示提示信息。
         this.renderEmptyState('未找到对应的素材包'); // 提示用户检查 manifest。
         this.updateBrushStatus(this.editor.getSelectedTileId()); // 仍然同步状态栏画笔显示。
         return; // 结束渲染流程。
       }
+      this.updatePackMeta(pack); // 根据 pack 信息更新提示条显示状态。
       const keyword = this.assetPanel.search.value.trim().toLowerCase(); // 读取并规范化搜索关键字。
       const tiles = pack.tiles.filter((tile) => {
         // 根据关键字过滤素材列表。
@@ -317,10 +348,24 @@
       button.type = 'button'; // 设置按钮类型为普通按钮。
       button.className = 'asset-tile-button'; // 应用素材按钮样式。
       button.title = tileDef.id; // 设置 title 属性悬浮显示素材 id。
-      const thumb = this.assets.makeTileThumb(tileDef); // 调用 Assets 生成 48×48 缩略图。
-      thumb.width = 48; // 显式指定缩略图宽度，确保布局稳定。
-      thumb.height = 48; // 显式指定缩略图高度。
-      button.appendChild(thumb); // 将缩略图 canvas 插入按钮。
+      const gridSize = this.assets.getGridSize(); // 读取全局网格尺寸以确保缩略图大小一致。
+      const thumb = this.assets.makeTileThumb(tileDef); // 调用 Assets 生成缩略图。
+      thumb.width = gridSize; // 设置画布逻辑尺寸。
+      thumb.height = gridSize;
+      thumb.style.width = `${gridSize}px`; // 同步 CSS 尺寸确保布局稳定。
+      thumb.style.height = `${gridSize}px`;
+      const thumbWrapper = document.createElement('div'); // 创建包裹缩略图与角标的容器。
+      thumbWrapper.className = 'asset-tile-thumb';
+      thumbWrapper.style.width = `${gridSize}px`;
+      thumbWrapper.style.height = `${gridSize}px`;
+      thumbWrapper.appendChild(thumb);
+      if (tileDef.meta && Number.isInteger(tileDef.meta.group)) {
+        const badge = document.createElement('span'); // 创建角标显示组号。
+        badge.className = 'asset-tile-badge';
+        badge.textContent = `G${tileDef.meta.group}`;
+        thumbWrapper.appendChild(badge);
+      }
+      button.appendChild(thumbWrapper); // 将包裹容器插入按钮。
       button.addEventListener('click', () => {
         // 绑定点击事件以更新画笔选择。
         this.handleTileSelection(tileDef.id); // 调用内部方法设置当前画笔并刷新状态。
