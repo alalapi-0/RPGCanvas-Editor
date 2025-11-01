@@ -13,7 +13,21 @@
     editor: null, // 缓存编辑器实例引用，读取状态与数据层 API。
     assets: null, // 缓存 Assets 管理器引用，统一访问 manifest 与缩略图功能。
     status: { map: null, layer: null, brush: null, zoom: null, pos: null, hint: null }, // 存储状态栏各个文本节点引用。
-    assetPanel: { select: null, search: null, grid: null, packMeta: null, errorBanner: null, buttons: [], currentPack: null, ready: false }, // 管理素材面板内部节点与状态。
+    assetPanel: {
+      select: null,
+      search: null,
+      grid: null,
+      packMeta: null,
+      docSection: null,
+      docTitle: null,
+      docBody: null,
+      docVersion: null,
+      docCache: new Map(),
+      errorBanner: null,
+      buttons: [],
+      currentPack: null,
+      ready: false,
+    }, // 管理素材面板内部节点与状态。
     panOrigin: { x: 0, y: 0 }, // 记录开始平移时的屏幕坐标，用于计算位移。
     brushRotation: 0, // 记录当前画笔预览的旋转角度，配合状态栏显示。
     editState: { painting: false, erasing: false, lastGX: null, lastGY: null }, // 记录当前鼠标绘制/擦除的拖拽状态。
@@ -208,15 +222,41 @@
       grid.className = 'asset-grid'; // 应用定义好的网格样式。
       grid.setAttribute('aria-label', 'Asset Thumbnails'); // 添加辅助功能标签方便朗读器。
 
+      const docSection = document.createElement('section'); // 创建素材说明区域容器。
+      docSection.className = 'asset-docs'; // 应用说明区域样式。
+      const docHeader = document.createElement('div'); // 创建说明区域标题行。
+      docHeader.className = 'asset-docs-header'; // 设置标题行样式。
+      const docTitle = document.createElement('h3'); // 创建说明标题。
+      docTitle.className = 'asset-docs-title'; // 应用标题样式。
+      docTitle.textContent = '素材说明'; // 设置默认标题文案。
+      const docVersion = document.createElement('span'); // 创建版本徽章。
+      docVersion.className = 'asset-docs-version'; // 应用徽章样式。
+      docVersion.hidden = true; // 初始隐藏，待 manifest 加载后显示。
+      const docBody = document.createElement('pre'); // 创建文本容器保留换行。
+      docBody.className = 'asset-docs-body'; // 应用正文样式。
+      docBody.dataset.state = 'empty'; // 标记初始状态为空。
+      docBody.textContent = '等待素材包加载…选择素材包后可查看切分方法与 Prompt。'; // 默认提示文案。
+      docBody.setAttribute('aria-live', 'polite'); // 便于辅助技术监听内容变化。
+      docHeader.appendChild(docTitle); // 将标题插入标题行。
+      docHeader.appendChild(docVersion); // 将版本徽章插入标题行。
+      docSection.appendChild(docHeader); // 组合标题行。
+      docSection.appendChild(docBody); // 插入正文区域。
+
       panelBody.appendChild(packGroup); // 将下拉框表单分组插入面板。
       panelBody.appendChild(searchGroup); // 将搜索表单分组插入面板。
       panelBody.appendChild(packMeta); // 插入素材包元信息提示条。
       panelBody.appendChild(grid); // 将素材网格插入面板底部。
+      panelBody.appendChild(docSection); // 在面板底部追加素材说明区域。
 
       this.assetPanel.select = packSelect; // 缓存下拉框引用供后续使用。
       this.assetPanel.search = searchInput; // 缓存搜索输入框引用。
       this.assetPanel.grid = grid; // 缓存素材网格容器。
       this.assetPanel.packMeta = packMeta; // 缓存提示条引用以便更新显示。
+      this.assetPanel.docSection = docSection; // 缓存说明区域容器。
+      this.assetPanel.docTitle = docTitle; // 缓存说明标题引用。
+      this.assetPanel.docBody = docBody; // 缓存说明正文引用。
+      this.assetPanel.docVersion = docVersion; // 缓存版本徽章引用。
+      this.assetPanel.docCache = new Map(); // 初始化素材说明缓存。
       this.assetPanel.buttons = []; // 重置按钮列表，等待渲染时填充。
       this.assetPanel.currentPack = null; // 当前选中的素材包名称初始化为空。
 
@@ -242,7 +282,11 @@
       }
       this.clearManifestError(); // 清理可能存在的错误提示条。
       const packs = this.assets.getPacks(); // 获取规范化后的素材包列表。
+      if (this.assetPanel.docCache) {
+        this.assetPanel.docCache.clear(); // 清空旧的素材说明缓存，确保新内容立即生效。
+      }
       this.populatePackOptions(packs); // 根据 manifest 填充下拉选项。
+      this.updateManifestVersionBadge(); // 更新 manifest 版本显示徽章。
       if (packs.length > 0) {
         // 当存在素材包时启用筛选控件并渲染网格。
         this.assetPanel.select.disabled = false; // 允许切换素材包。
@@ -250,12 +294,32 @@
         this.assetPanel.currentPack = packs[0].name; // 默认选中第一个素材包。
         this.assetPanel.select.value = packs[0].name; // 同步下拉框选中项。
         this.renderAssetGrid(); // 渲染默认素材包的缩略图列表。
+        await this.updatePackDocumentation(packs[0].name); // 同步加载默认素材包的说明文本。
       } else {
         // 当 manifest 中没有素材包时显示空状态。
         this.renderEmptyState('manifest 中未定义任何素材包'); // 提示需要补充数据。
+        await this.updatePackDocumentation(null); // 更新说明区域提示缺少素材包。
       }
       this.assetPanel.ready = true; // 标记素材面板已准备就绪。
       return true; // 返回 true 告知入口脚本加载成功。
+    },
+
+    updateManifestVersionBadge() {
+      // 根据 manifest 信息更新说明区域中的版本徽章。
+      const badge = this.assetPanel.docVersion;
+      if (!badge) {
+        return;
+      }
+      const version = this.assets.manifest && typeof this.assets.manifest.version === 'string'
+        ? this.assets.manifest.version.trim()
+        : '';
+      if (version) {
+        badge.textContent = `manifest ${version}`;
+        badge.hidden = false;
+      } else {
+        badge.textContent = '';
+        badge.hidden = true;
+      }
     },
 
     populatePackOptions(packs) {
@@ -298,6 +362,7 @@
       const selected = this.assetPanel.select.value; // 读取下拉框当前选中值。
       this.assetPanel.currentPack = selected; // 更新面板状态中的当前包名称。
       this.renderAssetGrid(); // 刷新素材缩略图列表。
+      this.updatePackDocumentation(selected); // 异步加载对应素材说明文本。
     },
 
     renderAssetGrid() {
@@ -312,6 +377,7 @@
       const pack = packs.find((item) => item.name === this.assetPanel.currentPack); // 查找当前选择的素材包。
       if (!pack) {
         this.updatePackMeta(null);
+        this.updatePackDocumentation(null);
         // 当当前选择不存在时显示提示信息。
         this.renderEmptyState('未找到对应的素材包'); // 提示用户检查 manifest。
         this.updateBrushStatus(this.editor.getSelectedTileId()); // 仍然同步状态栏画笔显示。
@@ -340,6 +406,68 @@
         this.assetPanel.buttons.push(button); // 记录按钮引用用于状态同步。
       });
       this.syncGridSelection(this.editor.getSelectedTileId()); // 根据当前画笔状态刷新选中样式。
+    },
+
+    async updatePackDocumentation(packName) {
+      // 根据选中的素材包加载并展示说明文本与 Prompt 记录。
+      const titleNode = this.assetPanel.docTitle;
+      const bodyNode = this.assetPanel.docBody;
+      if (!titleNode || !bodyNode) {
+        return false;
+      }
+      const cache = this.assetPanel.docCache instanceof Map ? this.assetPanel.docCache : new Map();
+      this.assetPanel.docCache = cache;
+      const fallbackTitle = '素材说明';
+      if (!packName) {
+        titleNode.textContent = fallbackTitle;
+        bodyNode.dataset.state = 'empty';
+        bodyNode.textContent = '暂无可用的素材包，请先在 manifest 中配置素材与说明文档。';
+        bodyNode.scrollTop = 0;
+        return false;
+      }
+      titleNode.textContent = `${packName} 素材说明`;
+      if (cache.has(packName)) {
+        const cached = cache.get(packName);
+        if (cached && typeof cached === 'object') {
+          bodyNode.dataset.state = cached.state || 'ready';
+          bodyNode.textContent = cached.text || '';
+          bodyNode.scrollTop = 0;
+          return cached.state === 'ready';
+        }
+      }
+      bodyNode.dataset.state = 'loading';
+      bodyNode.textContent = '正在加载素材说明…';
+      try {
+        const response = await fetch(`assets/${encodeURIComponent(packName)}.txt`, { cache: 'no-cache' });
+        if (!response.ok) {
+          throw new Error(`status ${response.status}`);
+        }
+        let raw = await response.text();
+        if (typeof raw !== 'string') {
+          raw = '';
+        }
+        const cleaned = raw.replace(/^[\uFEFF\u200B]+/, '');
+        if (!cleaned.trim()) {
+          cache.delete(packName);
+          bodyNode.dataset.state = 'empty';
+          bodyNode.textContent = `素材说明文件为空。请在 assets/${packName}.txt 中补充切分步骤与 Prompt。`;
+          bodyNode.scrollTop = 0;
+          return false;
+        }
+        const entry = { text: cleaned, state: 'ready' };
+        cache.set(packName, entry);
+        bodyNode.dataset.state = entry.state;
+        bodyNode.textContent = cleaned;
+        bodyNode.scrollTop = 0;
+        return true;
+      } catch (error) {
+        console.warn(`[UI] 加载素材说明失败: ${packName}`, error);
+        cache.delete(packName);
+        bodyNode.dataset.state = 'error';
+        bodyNode.textContent = `未找到素材说明文件或加载失败。请确认 assets/${packName}.txt 是否存在。`;
+        bodyNode.scrollTop = 0;
+        return false;
+      }
     },
 
     createTileButton(tileDef) {
@@ -499,6 +627,16 @@
       banner.textContent = message; // 写入错误说明文本。
       this.elements.sidebar.querySelector('.panel-body')?.prepend(banner); // 将提示条插入面板顶部。
       this.assetPanel.errorBanner = banner; // 缓存提示条引用以便后续移除或更新。
+      if (this.assetPanel.docBody) {
+        this.assetPanel.docBody.dataset.state = 'error';
+        this.assetPanel.docBody.textContent = '素材清单加载失败，无法显示素材说明。';
+      }
+      if (this.assetPanel.docTitle) {
+        this.assetPanel.docTitle.textContent = '素材说明';
+      }
+      if (this.assetPanel.docVersion) {
+        this.assetPanel.docVersion.hidden = true;
+      }
     },
 
     clearManifestError() {

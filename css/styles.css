@@ -441,6 +441,61 @@ body.grabbing #mapCanvas.brush-visible {
   color: var(--color-muted);
 }
 
+.asset-docs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background-color: rgba(0, 0, 0, 0.25);
+}
+
+.asset-docs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.asset-docs-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.asset-docs-version {
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.asset-docs-body {
+  margin: 0;
+  padding: 12px;
+  border-radius: 8px;
+  background-color: rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 280px;
+  overflow-y: auto;
+  font-family: "Fira Code", "Consolas", "Source Han Sans", "PingFang SC", sans-serif;
+}
+
+.asset-docs-body[data-state='loading'],
+.asset-docs-body[data-state='empty'] {
+  color: var(--color-muted);
+  font-style: italic;
+}
+
+.asset-docs-body[data-state='error'] {
+  color: #f28b82;
+  font-style: normal;
+}
+
 .asset-empty {
   grid-column: 1 / -1;
   padding: 32px 0;
